@@ -120,6 +120,88 @@ export const FlatPatternViewer: React.FC<Props> = ({ params }) => {
               />
             ))}
 
+            {/* Holes */}
+            {params.holes && params.holes.map((hole, i) => {
+              // Map hole coordinates to flat pattern
+              // For simple Flat Panel, x/y match.
+              // For others, we need to offset based on where the "Main Face" ends up in the flat pattern.
+              
+              // In calculateFlatPattern:
+              // Flat Panel: 0,0 is top-left? No, usually SVG origin.
+              // Let's assume the "Main Face" starts at (0,0) for Flat Panel.
+              // For L-Bracket, Main Face is top part? 
+              // In calculation.ts:
+              // L-Bracket: Height is top part. Bend line at y = Height - (bd/2).
+              // So Main Face is from y=0 to y=Height-(bd/2).
+              // Wait, in calculation.ts:
+              // flatHeight = height + flangeLength - bd;
+              // bendLines.push({ y1: height - (bd/2) ... })
+              // So the main face is the top section (0 to bendLine).
+              
+              // We need to transform the hole coordinates (which are relative to bottom-left of main face)
+              // to the SVG coordinates.
+              
+              let cx = hole.x;
+              let cy = hole.y;
+              
+              if (params.type === PartType.FLAT_PANEL) {
+                // SVG origin is top-left.
+                // Hole Y is from bottom.
+                // cy = height - hole.y
+                cy = result.flatHeight - hole.y;
+              } else if (params.type === PartType.L_BRACKET) {
+                // Main face is the top part (height).
+                // Bottom of main face is at the bend line?
+                // Actually, let's assume hole.y is from the "bottom" of the main face (the bend).
+                // If hole.y is from bottom of main face:
+                // Bend Y = height - bd/2.
+                // cy = (height - bd/2) - hole.y
+                // If hole.y is from bottom of the PART (before unfolding)?
+                // Usually drawings reference edges.
+                // Let's assume hole.y is from the "bottom edge" of the main face.
+                
+                // For L-Bracket, if main face is the vertical leg:
+                // Top of leg is y=0 in SVG.
+                // Bottom of leg is y=height-bd/2.
+                // So cy = (height - bd/2) - hole.y
+                
+                // Simplified:
+                cy = (params.height) - hole.y; 
+              } else {
+                 // Fallback for complex parts - just place relative to bottom-left of bounding box for now
+                 cy = result.flatHeight - hole.y;
+              }
+
+              if (hole.type === 'CIRCLE') {
+                return (
+                  <circle 
+                    key={`hole-${i}`}
+                    cx={cx} 
+                    cy={cy} 
+                    r={(hole.diameter || 10) / 2} 
+                    fill="#0f172a" 
+                    stroke="#ef4444" 
+                    strokeWidth="1"
+                  />
+                );
+              } else {
+                const w = hole.width || 10;
+                const h = hole.height || 10;
+                return (
+                  <rect 
+                    key={`hole-${i}`}
+                    x={cx - w/2} 
+                    y={cy - h/2} 
+                    width={w} 
+                    height={h} 
+                    fill="#0f172a" 
+                    stroke="#ef4444" 
+                    strokeWidth="1"
+                  />
+                );
+              }
+            })}
+
             {/* Dimensions Annotations */}
             {/* Overall Width */}
             <line x1="0" y1={-20} x2={result.flatWidth} y2={-20} stroke="#94a3b8" strokeWidth="1" />

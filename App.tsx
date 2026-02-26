@@ -9,65 +9,84 @@ import { analyzeDrawing } from './services/geminiService';
 const App: React.FC = () => {
   const [params, setParams] = useState<SheetMetalParams>(DEFAULT_PARAMS);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; data: string; mimeType: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [aiReasoning, setAiReasoning] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
 
   // File Upload Handler
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    // Reset state
+    // Reset error
     setError(null);
     setAiReasoning(null);
 
-    const fileName = file.name.toLowerCase();
-    
-    // Handle DWG specifically
-    if (fileName.endsWith('.dwg')) {
-      setError("DWG format is binary and not directly supported. Please export as PDF or DXF for AI analysis.");
-      return;
-    }
+    const newFiles: { name: string; data: string; mimeType: string }[] = [];
+    let processedCount = 0;
 
-    // Handle DXF (Read as Text)
-    if (fileName.endsWith('.dxf')) {
+    Array.from(files).forEach(file => {
+      const fileName = file.name.toLowerCase();
+      
+      // Handle DWG specifically (Error)
+      if (fileName.endsWith('.dwg')) {
+        setError("DWG format is binary and cannot be processed by the AI directly. Please export as PDF or DXF.");
+        processedCount++;
+        if (processedCount === files.length) updateFiles(newFiles);
+        return;
+      }
+
+      // Handle DXF (Read as Text)
+      if (fileName.endsWith('.dxf')) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const textContent = reader.result as string;
+          newFiles.push({ name: file.name, data: textContent, mimeType: 'application/dxf' });
+          processedCount++;
+          if (processedCount === files.length) updateFiles(newFiles);
+        };
+        reader.readAsText(file);
+        return;
+      }
+
+      // Handle Images and PDF (Read as Data URL)
       const reader = new FileReader();
       reader.onloadend = () => {
-        const textContent = reader.result as string;
-        setUploadedImage(null); // No preview for DXF
-        processImage(textContent, 'application/dxf');
+        const base64String = reader.result as string;
+        const matches = base64String.match(/^data:(.*);base64,(.*)$/);
+        
+        if (matches && matches.length === 3) {
+          newFiles.push({ name: file.name, data: matches[2], mimeType: matches[1] });
+        } else {
+          console.error("Invalid file format for", file.name);
+        }
+        processedCount++;
+        if (processedCount === files.length) updateFiles(newFiles);
       };
-      reader.readAsText(file);
-      return;
-    }
+      reader.readAsDataURL(file);
+    });
+  };
 
-    // Handle Images and PDF (Read as Data URL)
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      setUploadedImage(base64String);
-      
-      // Extract MIME type and base64 data
-      const matches = base64String.match(/^data:(.*);base64,(.*)$/);
-      if (matches && matches.length === 3) {
-        const mimeType = matches[1];
-        const base64Data = matches[2];
-        processImage(base64Data, mimeType);
-      } else {
-        setError("Invalid file format");
-      }
-    };
-    reader.readAsDataURL(file);
+  const updateFiles = (newFiles: { name: string; data: string; mimeType: string }[]) => {
+    setUploadedFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const removeFile = (index: number) => {
+    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAnalyze = () => {
+    if (uploadedFiles.length === 0) return;
+    processImages(uploadedFiles);
   };
 
   // AI Processing
-  const processImage = async (content: string, mimeType: string) => {
+  const processImages = async (files: { data: string; mimeType: string }[]) => {
     setIsAnalyzing(true);
     
     try {
-      const result = await analyzeDrawing(content, mimeType);
+      const result = await analyzeDrawing(files);
       
       setAiReasoning(result.reasoning);
       
@@ -81,6 +100,7 @@ const App: React.FC = () => {
         flangeLength: result.extractedParams.flangeLength || prev.flangeLength,
         materialThickness: result.extractedParams.materialThickness || prev.materialThickness,
         bendRadius: result.extractedParams.bendRadius || prev.bendRadius,
+        manufacturingAdvice: result.manufacturingAdvice
       }));
       
       // Switch to 3D view automatically after analysis
@@ -120,42 +140,58 @@ const App: React.FC = () => {
         <div className="lg:col-span-3 space-y-6">
           {/* Upload Card */}
           <div className="bg-slate-900 border border-slate-700 rounded-lg p-4">
-             <h3 className="text-sm font-semibold text-slate-300 mb-3">1. 上传图纸 (Upload Drawing)</h3>
-             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-slate-700 border-dashed rounded-lg cursor-pointer bg-slate-800 hover:bg-slate-750 transition-colors group">
-                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    {uploadedImage ? (
-                        (uploadedImage.startsWith('data:image/png') || 
-                         uploadedImage.startsWith('data:image/jpeg') || 
-                         uploadedImage.startsWith('data:image/webp') || 
-                         uploadedImage.startsWith('data:image/svg+xml')) ? (
-                          <img src={uploadedImage} alt="Preview" className="h-20 object-contain opacity-80" />
-                        ) : uploadedImage.startsWith('data:application/pdf') ? (
-                          <div className="flex flex-col items-center text-red-400">
-                             <svg className="w-10 h-10 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                             <span className="text-xs">PDF Document</span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center text-slate-400">
-                            <svg className="w-10 h-10 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            <span className="text-xs">File Uploaded</span>
-                          </div>
-                        )
-                    ) : (
-                        <>
-                        <svg className="w-8 h-8 mb-3 text-slate-500 group-hover:text-industrial-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        <p className="text-xs text-slate-500">点击上传 (Image, PDF, DXF)</p>
-                        <p className="text-[10px] text-slate-600 mt-1">不支持 DWG (请转存为 PDF/DXF)</p>
-                        </>
-                    )}
+             <h3 className="text-sm font-semibold text-slate-300 mb-3">1. 上传图纸 (Upload Drawings)</h3>
+             
+             {/* File List */}
+             {uploadedFiles.length > 0 && (
+               <div className="mb-4 space-y-2">
+                 {uploadedFiles.map((file, idx) => (
+                   <div key={idx} className="flex items-center justify-between bg-slate-800 p-2 rounded border border-slate-700">
+                     <div className="flex items-center gap-2 overflow-hidden">
+                       {file.mimeType.startsWith('image/') ? (
+                         <img src={`data:${file.mimeType};base64,${file.data}`} className="w-8 h-8 object-cover rounded" alt="thumb" />
+                       ) : (
+                         <div className="w-8 h-8 bg-slate-700 flex items-center justify-center rounded text-xs text-slate-400">
+                           {file.mimeType.includes('pdf') ? 'PDF' : 'DXF'}
+                         </div>
+                       )}
+                       <span className="text-xs text-slate-300 truncate max-w-[150px]">{file.name}</span>
+                     </div>
+                     <button onClick={() => removeFile(idx)} className="text-slate-500 hover:text-red-400">
+                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                     </button>
+                   </div>
+                 ))}
+               </div>
+             )}
+
+             <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-slate-700 border-dashed rounded-lg cursor-pointer bg-slate-800 hover:bg-slate-750 transition-colors group">
+                <div className="flex flex-col items-center justify-center pt-2 pb-3">
+                    <svg className="w-6 h-6 mb-2 text-slate-500 group-hover:text-industrial-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                    <p className="text-xs text-slate-500">点击添加文件 (支持多选)</p>
+                    <p className="text-[10px] text-slate-600">Image, PDF, DXF (不支持 DWG)</p>
                 </div>
-                <input type="file" className="hidden" accept="image/*,.pdf,.dxf" onChange={handleFileUpload} />
+                <input type="file" className="hidden" multiple accept="image/*,.pdf,.dxf,.dwg" onChange={handleFileUpload} />
             </label>
-            
-            {isAnalyzing && (
-              <div className="mt-4 flex items-center justify-center gap-2 text-industrial-400 text-sm animate-pulse">
-                <svg className="animate-spin h-4 w-4 text-industrial-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                AI 正在识别图纸参数...
-              </div>
+
+            {uploadedFiles.length > 0 && (
+              <button 
+                onClick={handleAnalyze} 
+                disabled={isAnalyzing}
+                className={`mt-4 w-full py-2 rounded font-medium text-sm flex items-center justify-center gap-2 transition-colors ${isAnalyzing ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-industrial-600 hover:bg-industrial-500 text-white'}`}
+              >
+                {isAnalyzing ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    AI 分析中...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                    开始 AI 识别 ({uploadedFiles.length})
+                  </>
+                )}
+              </button>
             )}
             
             {error && (
@@ -165,9 +201,21 @@ const App: React.FC = () => {
             )}
             
             {aiReasoning && (
-              <div className="mt-4 p-3 bg-industrial-900/30 border border-industrial-800 rounded">
-                <h4 className="text-xs font-bold text-industrial-400 mb-1">AI 分析结果 (Analysis):</h4>
-                <p className="text-xs text-slate-300 leading-relaxed">{aiReasoning}</p>
+              <div className="mt-4 space-y-4">
+                <div className="p-3 bg-industrial-900/30 border border-industrial-800 rounded">
+                  <h4 className="text-xs font-bold text-industrial-400 mb-1">AI 分析结果 (Analysis):</h4>
+                  <p className="text-xs text-slate-300 leading-relaxed">{aiReasoning}</p>
+                </div>
+                
+                {params.manufacturingAdvice && (
+                  <div className="p-3 bg-amber-900/20 border border-amber-800/50 rounded">
+                    <h4 className="text-xs font-bold text-amber-500 mb-1 flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                      加工建议 (Manufacturing Advice):
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{params.manufacturingAdvice}</p>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -1,0 +1,5 @@
+{
+  "name": "SheetMetalAI - Intelligent Unfolder",
+  "description": "An AI-powered assistant for sheet metal workers. Upload technical drawings of electrical cabinets or parts, and the AI will extract dimensions to generate an unfolded flat pattern (DXF/SVG ready) for cutting.",
+  "requestFramePermissions": []
+}

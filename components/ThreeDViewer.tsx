@@ -113,13 +113,33 @@ const PartGeometry: React.FC<{ params: SheetMetalParams }> = ({ params }) => {
       return (
         <group>
           {/* Base (Width x Height) - Main Face */}
-          <PanelWithHoles width={width} height={height} thickness={t} holes={holes} position={[0, 0, -t/2]} />
+          <PanelWithHoles 
+            width={width} 
+            height={height} 
+            thickness={t} 
+            holes={holes?.filter(h => !h.face || h.face === 'MAIN')} 
+            position={[0, 0, -t/2]} 
+          />
           
           {/* Left Flange */}
-          <PanelWithHoles width={depth} height={height} thickness={t} position={[-width / 2 + t / 2, 0, depth / 2]} rotation={[0, Math.PI/2, 0]} />
+          <PanelWithHoles 
+            width={depth} 
+            height={height} 
+            thickness={t} 
+            holes={holes?.filter(h => h.face === 'FLANGE_LEFT')}
+            position={[-width / 2 + t / 2, 0, depth / 2]} 
+            rotation={[0, Math.PI/2, 0]} 
+          />
           
           {/* Right Flange */}
-          <PanelWithHoles width={depth} height={height} thickness={t} position={[width / 2 - t / 2, 0, depth / 2]} rotation={[0, Math.PI/2, 0]} />
+          <PanelWithHoles 
+            width={depth} 
+            height={height} 
+            thickness={t} 
+            holes={holes?.filter(h => h.face === 'FLANGE_RIGHT')}
+            position={[width / 2 - t / 2, 0, depth / 2]} 
+            rotation={[0, Math.PI/2, 0]} 
+          />
         </group>
       );
 

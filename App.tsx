@@ -1,95 +1,137 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { SheetMetalParams } from './types';
 import { DEFAULT_PARAMS } from './constants';
 import { FlatPatternViewer } from './components/FlatPatternViewer';
 import { ThreeDViewer } from './components/ThreeDViewer';
 import { ParameterControls } from './components/ParameterControls';
-import { analyzeDrawing } from './services/geminiService';
+import { analyzeDrawing, listAvailableModels, ViewFile } from './services/geminiService';
+
+// View slot definition
+interface ViewSlot {
+  key: 'front' | 'side' | 'plan';
+  label: string;       // Chinese label shown in UI
+  viewLabel: string;   // Label sent to AI
+  required: boolean;
+}
+
+const VIEW_SLOTS: ViewSlot[] = [
+  { key: 'front', label: '主视图', viewLabel: '主视图 (Front View) - 正面，显示零件长度和高度', required: true },
+  { key: 'side',  label: '侧视图', viewLabel: '侧视图 (Side View) - 截面，显示折弯形状和翼缘高度',  required: false },
+  { key: 'plan',  label: '俯视图', viewLabel: '俯视图 (Plan View) - 顶部，显示宽度和孔位排布',   required: false },
+];
+
+// Uploaded file for a single view slot
+interface SlotFile {
+  name: string;
+  data: string;
+  mimeType: string;
+}
 
 const App: React.FC = () => {
   const [params, setParams] = useState<SheetMetalParams>(DEFAULT_PARAMS);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; data: string; mimeType: string }[]>([]);
+
+  // One file per view slot (null = not uploaded yet)
+  const [slotFiles, setSlotFiles] = useState<Record<string, SlotFile | null>>({
+    front: null,
+    side: null,
+    plan: null,
+  });
+
   const [error, setError] = useState<string | null>(null);
   const [aiReasoning, setAiReasoning] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
 
-  // File Upload Handler
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  // Debug: list available models
+  const checkModels = async () => {
+    try {
+      const models = await listAvailableModels();
+      alert(`Available Models:\n${models.map((m: any) => m.name.replace('models/', '')).join('\n')}`);
+    } catch (e: any) {
+      alert(`Failed to list models. Check API Key.\nError: ${e.message}`);
+    }
+  };
 
-    // Reset error
-    setError(null);
-    setAiReasoning(null);
-
-    const newFiles: { name: string; data: string; mimeType: string }[] = [];
-    let processedCount = 0;
-
-    Array.from(files).forEach(file => {
+  // Read a single File object and return a SlotFile
+  const readFile = (file: File): Promise<SlotFile> => {
+    return new Promise((resolve, reject) => {
       const fileName = file.name.toLowerCase();
-      
-      // Handle DWG specifically (Error)
+
       if (fileName.endsWith('.dwg')) {
-        setError("DWG format is binary and cannot be processed by the AI directly. Please export as PDF or DXF.");
-        processedCount++;
-        if (processedCount === files.length) updateFiles(newFiles);
+        reject(new Error("DWG 格式不支持，请导出为 PDF 或 DXF"));
         return;
       }
 
-      // Handle DXF (Read as Text)
       if (fileName.endsWith('.dxf')) {
         const reader = new FileReader();
-        reader.onloadend = () => {
-          const textContent = reader.result as string;
-          newFiles.push({ name: file.name, data: textContent, mimeType: 'application/dxf' });
-          processedCount++;
-          if (processedCount === files.length) updateFiles(newFiles);
-        };
+        reader.onloadend = () => resolve({ name: file.name, data: reader.result as string, mimeType: 'application/dxf' });
+        reader.onerror = reject;
         reader.readAsText(file);
         return;
       }
 
-      // Handle Images and PDF (Read as Data URL)
+      // Image / PDF → base64
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
         const matches = base64String.match(/^data:(.*);base64,(.*)$/);
-        
-        if (matches && matches.length === 3) {
-          newFiles.push({ name: file.name, data: matches[2], mimeType: matches[1] });
+        if (matches) {
+          resolve({ name: file.name, data: matches[2], mimeType: matches[1] });
         } else {
-          console.error("Invalid file format for", file.name);
+          reject(new Error(`无法解析文件：${file.name}`));
         }
-        processedCount++;
-        if (processedCount === files.length) updateFiles(newFiles);
       };
+      reader.onerror = reject;
       reader.readAsDataURL(file);
     });
   };
 
-  const updateFiles = (newFiles: { name: string; data: string; mimeType: string }[]) => {
-    setUploadedFiles(prev => [...prev, ...newFiles]);
+  // Handle file selection for a specific view slot
+  const handleSlotUpload = async (slotKey: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setError(null);
+    try {
+      const slotFile = await readFile(files[0]);
+      setSlotFiles(prev => ({ ...prev, [slotKey]: slotFile }));
+    } catch (err: any) {
+      setError(err.message);
+    }
+    // Reset input so same file can be re-selected
+    e.target.value = '';
   };
 
-  const removeFile = (index: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  const clearSlot = (slotKey: string) => {
+    setSlotFiles(prev => ({ ...prev, [slotKey]: null }));
   };
 
+  // Collect all uploaded slots in order and kick off analysis
   const handleAnalyze = () => {
-    if (uploadedFiles.length === 0) return;
-    processImages(uploadedFiles);
+    const viewFiles: ViewFile[] = VIEW_SLOTS
+      .filter(slot => slotFiles[slot.key] !== null)
+      .map(slot => ({
+        data: slotFiles[slot.key]!.data,
+        mimeType: slotFiles[slot.key]!.mimeType,
+        viewLabel: slot.viewLabel,
+      }));
+
+    if (viewFiles.length === 0) return;
+    processImages(viewFiles);
   };
+
+  const uploadedCount = VIEW_SLOTS.filter(s => slotFiles[s.key] !== null).length;
 
   // AI Processing
-  const processImages = async (files: { data: string; mimeType: string }[]) => {
+  const processImages = async (files: ViewFile[]) => {
     setIsAnalyzing(true);
-    
+    setAiReasoning(null);
+    setError(null);
+
     try {
       const result = await analyzeDrawing(files);
-      
+
       setAiReasoning(result.reasoning);
-      
+
       // Merge AI results into current params
       setParams(prev => ({
         ...prev,
@@ -100,9 +142,10 @@ const App: React.FC = () => {
         flangeLength: result.extractedParams.flangeLength || prev.flangeLength,
         materialThickness: result.extractedParams.materialThickness || prev.materialThickness,
         bendRadius: result.extractedParams.bendRadius || prev.bendRadius,
-        manufacturingAdvice: result.manufacturingAdvice
+        holes: result.extractedParams.holes || [],
+        manufacturingAdvice: result.manufacturingAdvice,
       }));
-      
+
       // Switch to 3D view automatically after analysis
       setViewMode('3d');
 
@@ -125,10 +168,11 @@ const App: React.FC = () => {
             <div>
               <h1 className="text-xl font-bold text-white tracking-tight">SheetMetal<span className="text-industrial-500">AI</span></h1>
               <p className="text-xs text-slate-400">智能钣金展开助手 (Smart Unfolder)</p>
+              <button onClick={checkModels} className="text-[10px] underline text-industrial-400 hover:text-industrial-300">Test Models</button>
             </div>
           </div>
           <div className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
-             Powered by Gemini 2.5 Flash
+             Powered by Gemini 3 Flash
           </div>
         </div>
       </header>
@@ -140,43 +184,64 @@ const App: React.FC = () => {
         <div className="lg:col-span-3 space-y-6">
           {/* Upload Card */}
           <div className="bg-slate-900 border border-slate-700 rounded-lg p-4">
-             <h3 className="text-sm font-semibold text-slate-300 mb-3">1. 上传图纸 (Upload Drawings)</h3>
-             
-             {/* File List */}
-             {uploadedFiles.length > 0 && (
-               <div className="mb-4 space-y-2">
-                 {uploadedFiles.map((file, idx) => (
-                   <div key={idx} className="flex items-center justify-between bg-slate-800 p-2 rounded border border-slate-700">
-                     <div className="flex items-center gap-2 overflow-hidden">
-                       {file.mimeType.startsWith('image/') ? (
-                         <img src={`data:${file.mimeType};base64,${file.data}`} className="w-8 h-8 object-cover rounded" alt="thumb" />
-                       ) : (
-                         <div className="w-8 h-8 bg-slate-700 flex items-center justify-center rounded text-xs text-slate-400">
-                           {file.mimeType.includes('pdf') ? 'PDF' : 'DXF'}
-                         </div>
-                       )}
-                       <span className="text-xs text-slate-300 truncate max-w-[150px]">{file.name}</span>
-                     </div>
-                     <button onClick={() => removeFile(idx)} className="text-slate-500 hover:text-red-400">
-                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                     </button>
-                   </div>
-                 ))}
-               </div>
-             )}
+            <h3 className="text-sm font-semibold text-slate-300 mb-3">1. 上传图纸 (Upload Drawings)</h3>
+            <p className="text-[10px] text-slate-500 mb-3">分视图上传可显著提升 AI 识别精度。主视图必填，侧视图/俯视图可选。</p>
 
-             <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-slate-700 border-dashed rounded-lg cursor-pointer bg-slate-800 hover:bg-slate-750 transition-colors group">
-                <div className="flex flex-col items-center justify-center pt-2 pb-3">
-                    <svg className="w-6 h-6 mb-2 text-slate-500 group-hover:text-industrial-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                    <p className="text-xs text-slate-500">点击添加文件 (支持多选)</p>
-                    <p className="text-[10px] text-slate-600">Image, PDF, DXF (不支持 DWG)</p>
-                </div>
-                <input type="file" className="hidden" multiple accept="image/*,.pdf,.dxf,.dwg" onChange={handleFileUpload} />
-            </label>
+            {/* Three view slots */}
+            <div className="space-y-2">
+              {VIEW_SLOTS.map(slot => {
+                const file = slotFiles[slot.key];
+                return (
+                  <div key={slot.key} className="border border-slate-700 rounded-lg overflow-hidden">
+                    {/* Slot header */}
+                    <div className="flex items-center justify-between bg-slate-800 px-3 py-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${slot.required ? 'bg-industrial-400' : 'bg-slate-500'}`} />
+                        <span className="text-xs font-medium text-slate-300">{slot.label}</span>
+                        {slot.required && <span className="text-[10px] text-industrial-500">必填</span>}
+                      </div>
+                      {file && (
+                        <button onClick={() => clearSlot(slot.key)} className="text-slate-500 hover:text-red-400">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      )}
+                    </div>
 
-            {uploadedFiles.length > 0 && (
-              <button 
-                onClick={handleAnalyze} 
+                    {/* Slot body */}
+                    {file ? (
+                      // Uploaded state: show thumbnail/badge + filename
+                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-900">
+                        {file.mimeType.startsWith('image/') ? (
+                          <img src={`data:${file.mimeType};base64,${file.data}`} className="w-10 h-10 object-cover rounded border border-slate-700" alt="thumb" />
+                        ) : (
+                          <div className="w-10 h-10 bg-slate-700 flex items-center justify-center rounded border border-slate-600 text-xs text-slate-400 font-bold">
+                            {file.mimeType.includes('pdf') ? 'PDF' : 'DXF'}
+                          </div>
+                        )}
+                        <span className="text-xs text-slate-300 truncate flex-1">{file.name}</span>
+                        {/* Re-upload label */}
+                        <label className="text-[10px] text-industrial-400 hover:text-industrial-300 cursor-pointer shrink-0">
+                          更换
+                          <input type="file" className="hidden" accept="image/*,.pdf,.dxf" onChange={e => handleSlotUpload(slot.key, e)} />
+                        </label>
+                      </div>
+                    ) : (
+                      // Empty state: dashed upload area
+                      <label className="flex items-center justify-center gap-2 px-3 py-3 cursor-pointer bg-slate-900 hover:bg-slate-800 transition-colors group">
+                        <svg className="w-4 h-4 text-slate-600 group-hover:text-industrial-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                        <span className="text-xs text-slate-600 group-hover:text-slate-400">点击上传 Image / PDF / DXF</span>
+                        <input type="file" className="hidden" accept="image/*,.pdf,.dxf" onChange={e => handleSlotUpload(slot.key, e)} />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Analyze button */}
+            {uploadedCount > 0 && (
+              <button
+                onClick={handleAnalyze}
                 disabled={isAnalyzing}
                 className={`mt-4 w-full py-2 rounded font-medium text-sm flex items-center justify-center gap-2 transition-colors ${isAnalyzing ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-industrial-600 hover:bg-industrial-500 text-white'}`}
               >
@@ -188,7 +253,7 @@ const App: React.FC = () => {
                 ) : (
                   <>
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-                    开始 AI 识别 ({uploadedFiles.length})
+                    开始 AI 识别 ({uploadedCount} 张视图)
                   </>
                 )}
               </button>

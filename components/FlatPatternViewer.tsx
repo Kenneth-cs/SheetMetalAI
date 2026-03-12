@@ -122,54 +122,62 @@ export const FlatPatternViewer: React.FC<Props> = ({ params }) => {
 
             {/* Holes */}
             {params.holes && params.holes.map((hole, i) => {
-              // Map hole coordinates to flat pattern
-              // For simple Flat Panel, x/y match.
-              // For others, we need to offset based on where the "Main Face" ends up in the flat pattern.
-              
-              // In calculateFlatPattern:
-              // Flat Panel: 0,0 is top-left? No, usually SVG origin.
-              // Let's assume the "Main Face" starts at (0,0) for Flat Panel.
-              // For L-Bracket, Main Face is top part? 
-              // In calculation.ts:
-              // L-Bracket: Height is top part. Bend line at y = Height - (bd/2).
-              // So Main Face is from y=0 to y=Height-(bd/2).
-              // Wait, in calculation.ts:
-              // flatHeight = height + flangeLength - bd;
-              // bendLines.push({ y1: height - (bd/2) ... })
-              // So the main face is the top section (0 to bendLine).
-              
-              // We need to transform the hole coordinates (which are relative to bottom-left of main face)
-              // to the SVG coordinates.
-              
+              // Map hole coordinates (from part drawing) to SVG flat pattern space.
+              // SVG origin: top-left of the flat blank.
+              // Hole x/y from AI: measured from the bottom-left corner of the FACE they are on.
               let cx = hole.x;
               let cy = hole.y;
-              
-              if (params.type === PartType.FLAT_PANEL) {
-                // SVG origin is top-left.
-                // Hole Y is from bottom.
-                // cy = height - hole.y
+
+              const { type, width, height, depth, flangeLength } = params;
+              // Approximate flatten position of bend line for L-Bracket
+              const bendLineY = height; // simplified: bend line is at y = height from top
+
+              if (type === PartType.FLAT_PANEL) {
+                // Y from bottom → convert to SVG Y from top
                 cy = result.flatHeight - hole.y;
-              } else if (params.type === PartType.L_BRACKET) {
-                // Main face is the top part (height).
-                // Bottom of main face is at the bend line?
-                // Actually, let's assume hole.y is from the "bottom" of the main face (the bend).
-                // If hole.y is from bottom of main face:
-                // Bend Y = height - bd/2.
-                // cy = (height - bd/2) - hole.y
-                // If hole.y is from bottom of the PART (before unfolding)?
-                // Usually drawings reference edges.
-                // Let's assume hole.y is from the "bottom edge" of the main face.
-                
-                // For L-Bracket, if main face is the vertical leg:
-                // Top of leg is y=0 in SVG.
-                // Bottom of leg is y=height-bd/2.
-                // So cy = (height - bd/2) - hole.y
-                
-                // Simplified:
-                cy = (params.height) - hole.y; 
+
+              } else if (type === PartType.L_BRACKET) {
+                if (!hole.face || hole.face === 'MAIN') {
+                  // MAIN face occupies SVG Y: 0 → bendLineY
+                  // hole.y is measured from the BOTTOM of main face (= bend edge), going up
+                  cy = bendLineY - hole.y;
+                } else {
+                  // FLANGE face occupies SVG Y: bendLineY → flatHeight
+                  // hole.y is measured from the FREE (outer) edge of the flange, going inward
+                  cy = result.flatHeight - hole.y;
+                }
+
+              } else if (type === PartType.U_CHANNEL) {
+                // U-Channel flat layout (horizontal): [LEFT_FLANGE | MAIN | RIGHT_FLANGE]
+                // width(=230) runs horizontally, height(=25) runs vertically, depth(=15) = flange size
+                // Bend lines are vertical at x ≈ depth and x ≈ depth+width
+                const flangeFlat = depth; // approximate flange strip width in flat
+
+                if (!hole.face || hole.face === 'MAIN') {
+                  // MAIN section: starts at flangeFlat horizontally
+                  cx = flangeFlat + hole.x;
+                  cy = result.flatHeight - hole.y;
+                } else if (hole.face === 'FLANGE_LEFT' || hole.face === 'FLANGE_TOP') {
+                  // Left flange strip: x from 0 to flangeFlat
+                  // hole.x = along channel length, hole.y = from free edge (0) toward bend (depth)
+                  cx = flangeFlat - hole.y; // free edge at x=0, bend at x=flangeFlat
+                  cy = result.flatHeight - hole.x;
+                } else if (hole.face === 'FLANGE_RIGHT' || hole.face === 'FLANGE_BOTTOM') {
+                  // Right flange strip: x from flangeFlat+width to flatWidth
+                  cx = flangeFlat + width + hole.y; // bend at left, free edge at right
+                  cy = result.flatHeight - hole.x;
+                }
+
               } else {
-                 // Fallback for complex parts - just place relative to bottom-left of bounding box for now
-                 cy = result.flatHeight - hole.y;
+                // Fallback
+                cy = result.flatHeight - hole.y;
+              }
+
+              // Skip holes whose coordinates fall outside the flat blank area
+              const margin = (hole.diameter || Math.max(hole.width || 0, hole.height || 0) || 10) / 2;
+              if (cx - margin < -margin || cx + margin > result.flatWidth + margin ||
+                  cy - margin < -margin || cy + margin > result.flatHeight + margin) {
+                return null;
               }
 
               if (hole.type === 'CIRCLE') {

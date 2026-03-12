@@ -146,8 +146,10 @@ const App: React.FC = () => {
         manufacturingAdvice: result.manufacturingAdvice,
       }));
 
-      // Switch to 3D view automatically after analysis
-      setViewMode('3d');
+      // Switch to 2D flat pattern after analysis so the result is immediately visible.
+      // (Switching to 3D would be a no-op if already on 3D, and the canvas doesn't
+      // auto-refresh until the key-based remount triggers on next render.)
+      setViewMode('2d');
 
     } catch (err: any) {
       setError(err.message || "Failed to analyze drawing");

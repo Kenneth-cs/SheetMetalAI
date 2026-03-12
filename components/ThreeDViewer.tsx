@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Stage, Grid, Center } from '@react-three/drei';
+import { OrbitControls, Grid, Center } from '@react-three/drei';
 import * as THREE from 'three';
 import { SheetMetalParams, PartType, Hole } from '../types';
 
@@ -169,6 +169,10 @@ const PartGeometry: React.FC<{ params: SheetMetalParams }> = ({ params }) => {
 };
 
 export const ThreeDViewer: React.FC<Props> = ({ params }) => {
+  // Use params.type + key dimensions as Canvas key so it remounts when part type changes,
+  // ensuring the 3D scene fully refreshes after AI analysis.
+  const canvasKey = `${params.type}-${params.width}-${params.height}-${params.depth}`;
+
   return (
     <div className="w-full h-full bg-slate-900 rounded-lg overflow-hidden border border-slate-700 relative">
       <div className="absolute top-0 left-0 z-10 bg-slate-800/80 px-4 py-2 rounded-br-lg border-b border-r border-slate-700 backdrop-blur-sm">
@@ -177,25 +181,30 @@ export const ThreeDViewer: React.FC<Props> = ({ params }) => {
           3D 预览 (Folded View)
         </h3>
       </div>
-      
-      <Canvas shadows camera={{ position: [200, 200, 200], fov: 45 }}>
+
+      {/* key prop forces a full remount of the Canvas when part dimensions change */}
+      <Canvas key={canvasKey} shadows camera={{ position: [200, 200, 200], fov: 45 }}>
         <color attach="background" args={['#0f172a']} />
         <fog attach="fog" args={['#0f172a', 500, 2000]} />
-        
-        <Stage environment="city" intensity={0.5} adjustCamera={1.2}>
-          <Center>
-            <PartGeometry params={params} />
-          </Center>
-        </Stage>
-        
-        <Grid 
-          infiniteGrid 
-          fadeDistance={500} 
-          sectionColor="#1e293b" 
-          cellColor="#334155" 
-          position={[0, -50, 0]} 
+
+        {/* Use direct lights instead of Stage+HDR to avoid downloading a large environment map */}
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[200, 300, 200]} intensity={1.2} castShadow />
+        <directionalLight position={[-150, 200, -100]} intensity={0.5} />
+        <pointLight position={[0, 300, 0]} intensity={0.4} />
+
+        <Center>
+          <PartGeometry params={params} />
+        </Center>
+
+        <Grid
+          infiniteGrid
+          fadeDistance={500}
+          sectionColor="#1e293b"
+          cellColor="#334155"
+          position={[0, -50, 0]}
         />
-        
+
         <OrbitControls makeDefault autoRotate autoRotateSpeed={0.5} />
       </Canvas>
       

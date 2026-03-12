@@ -5,8 +5,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const analyzeDrawing = async (files: { data: string, mimeType: string }[]): Promise<AIAnalysisResponse> => {
   try {
-    // We use gemini-3.1-pro-preview for the latest capabilities.
-    const modelId = "gemini-3.1-pro-preview";
+    // We use gemini-3-flash-preview for its robust multimodal (Vision) capabilities and JSON schema support.
+    const modelId = "gemini-3-flash-preview";
     
     let parts: any[] = [];
 

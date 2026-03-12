@@ -1,12 +1,25 @@
 import { GoogleGenAI } from "@google/genai";
 import { AIAnalysisResponse, PartType } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Lazy initialization: create the client only when first used,
+// so a missing API key won't crash the app on page load.
+let _ai: GoogleGenAI | null = null;
+
+const getAI = (): GoogleGenAI => {
+  if (!_ai) {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("API Key 未配置。请在 Vercel 后台 Settings → Environment Variables 中添加 GEMINI_API_KEY，然后重新部署。");
+    }
+    _ai = new GoogleGenAI({ apiKey });
+  }
+  return _ai;
+};
 
 // Helper to list available models
 export const listAvailableModels = async () => {
   try {
-    const response = await ai.models.list();
+    const response = await getAI().models.list();
     const models: any[] = [];
     for await (const model of response) {
       models.push(model);
@@ -113,7 +126,7 @@ export const analyzeDrawing = async (files: ViewFile[]): Promise<AIAnalysisRespo
       }
     }
 
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model: modelId,
       contents: { parts }
       // No responseSchema: let the model output free-form JSON.

@@ -85,8 +85,28 @@ const PanelWithHoles: React.FC<{
   );
 };
 
+const expandHoleArray = (params: SheetMetalParams): Hole[] => {
+  const holes: Hole[] = [...(params.holes || [])];
+  
+  if (params.holeArray) {
+    const { startX, startY, spacing, count, diameter, face } = params.holeArray;
+    for (let i = 0; i < count; i++) {
+      holes.push({
+        type: 'CIRCLE',
+        x: startX + i * spacing,
+        y: startY,
+        diameter,
+        face: face || 'MAIN',
+      });
+    }
+  }
+  
+  return holes;
+};
+
 const PartGeometry: React.FC<{ params: SheetMetalParams }> = ({ params }) => {
-  const { type, width, height, depth, flangeLength, materialThickness, holes } = params;
+  const { type, width, height, depth, flangeLength, materialThickness } = params;
+  const holes = expandHoleArray(params);
   const t = materialThickness || 1; 
 
   switch (type) {
@@ -110,38 +130,75 @@ const PartGeometry: React.FC<{ params: SheetMetalParams }> = ({ params }) => {
       );
 
     case PartType.U_CHANNEL:
-      return (
-        <group>
-          {/* Base (Width x Height) - Main Face */}
-          <PanelWithHoles 
-            width={width} 
-            height={height} 
-            thickness={t} 
-            holes={holes?.filter(h => !h.face || h.face === 'MAIN')} 
-            position={[0, 0, -t/2]} 
-          />
-          
-          {/* Left Flange */}
-          <PanelWithHoles 
-            width={depth} 
-            height={height} 
-            thickness={t} 
-            holes={holes?.filter(h => h.face === 'FLANGE_LEFT')}
-            position={[-width / 2 + t / 2, 0, depth / 2]} 
-            rotation={[0, Math.PI/2, 0]} 
-          />
-          
-          {/* Right Flange */}
-          <PanelWithHoles 
-            width={depth} 
-            height={height} 
-            thickness={t} 
-            holes={holes?.filter(h => h.face === 'FLANGE_RIGHT')}
-            position={[width / 2 - t / 2, 0, depth / 2]} 
-            rotation={[0, Math.PI/2, 0]} 
-          />
-        </group>
-      );
+      if (params.bendAxis === 'SHORT') {
+        // ㄇ字型：沿短边（宽度方向）左右折弯
+        return (
+          <group>
+            {/* Base (Width x Height) - Main Face */}
+            <PanelWithHoles 
+              width={width} 
+              height={height} 
+              thickness={t} 
+              holes={holes?.filter(h => !h.face || h.face === 'MAIN')} 
+              position={[0, 0, -t/2]} 
+            />
+            
+            {/* Left Flange - bent upward along the left edge of base */}
+            <PanelWithHoles 
+              width={depth} 
+              height={height} 
+              thickness={t} 
+              holes={holes?.filter(h => h.face === 'FLANGE_LEFT')}
+              position={[-width / 2 + t / 2, 0, depth / 2]} 
+              rotation={[0, Math.PI/2, 0]} 
+            />
+            
+            {/* Right Flange - bent upward along the right edge of base */}
+            <PanelWithHoles 
+              width={depth} 
+              height={height} 
+              thickness={t} 
+              holes={holes?.filter(h => h.face === 'FLANGE_RIGHT')}
+              position={[width / 2 - t / 2, 0, depth / 2]} 
+              rotation={[0, Math.PI/2, 0]} 
+            />
+          </group>
+        );
+      } else {
+        // 水槽型（默认）：沿长边（高度方向）上下折弯
+        return (
+          <group>
+            {/* Base (Width x Height) - Main Face */}
+            <PanelWithHoles 
+              width={width} 
+              height={height} 
+              thickness={t} 
+              holes={holes?.filter(h => !h.face || h.face === 'MAIN')} 
+              position={[0, 0, -t/2]} 
+            />
+            
+            {/* Top Flange - bent upward along the top edge of base */}
+            <PanelWithHoles 
+              width={width} 
+              height={depth} 
+              thickness={t} 
+              holes={holes?.filter(h => h.face === 'FLANGE_TOP')}
+              position={[0, height / 2 - t / 2, depth / 2]} 
+              rotation={[Math.PI/2, 0, 0]} 
+            />
+            
+            {/* Bottom Flange - bent upward along the bottom edge of base */}
+            <PanelWithHoles 
+              width={width} 
+              height={depth} 
+              thickness={t} 
+              holes={holes?.filter(h => h.face === 'FLANGE_BOTTOM')}
+              position={[0, -height / 2 + t / 2, depth / 2]} 
+              rotation={[Math.PI/2, 0, 0]} 
+            />
+          </group>
+        );
+      }
 
     case PartType.BOX_PANEL:
       return (

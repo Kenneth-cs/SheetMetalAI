@@ -6,6 +6,7 @@ export default defineConfig(({ mode }) => {
     // loadEnv reads local .env files; process.env picks up Vercel-injected vars at build time
     const env = loadEnv(mode, '.', '');
     const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+    const dashscopeKey = env.DASHSCOPE_API_KEY || process.env.DASHSCOPE_API_KEY || '';
     return {
       server: {
         port: 3000,
@@ -14,7 +15,8 @@ export default defineConfig(({ mode }) => {
       plugins: [react()],
       define: {
         'process.env.API_KEY': JSON.stringify(apiKey),
-        'process.env.GEMINI_API_KEY': JSON.stringify(apiKey)
+        'process.env.GEMINI_API_KEY': JSON.stringify(apiKey),
+        'process.env.DASHSCOPE_API_KEY': JSON.stringify(dashscopeKey)
       },
       resolve: {
         alias: {

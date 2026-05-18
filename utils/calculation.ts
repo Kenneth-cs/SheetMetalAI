@@ -1,4 +1,4 @@
-import { SheetMetalParams, PartType, UnfoldingResult } from '../types';
+import { SheetMetalParams, PartType, BendAxis, UnfoldingResult } from '../types';
 
 /**
  * Simplified Bend Deduction calculation.
@@ -46,31 +46,49 @@ export const calculateFlatPattern = (params: SheetMetalParams): UnfoldingResult 
             break;
 
         case PartType.U_CHANNEL:
-            // Width is fixed length.
-            // Profile is Depth (leg1) - Width (base) - Depth (leg2) ... wait, standard U channel is usually defined as Base Width + 2 Flanges
-            // Let's assume 'width' is the base, 'height' is length, 'depth' is flange height.
-            // Actually usually: Width (base), Flange (depth).
+            // bendAxis determines the fold direction:
+            // 'LONG' (default, 水槽型): Bend along the long edge (height direction)
+            //   - Flat: width x (height + 2*depth - 2*bd)
+            //   - Bend lines are horizontal
+            // 'SHORT' (ㄇ字型): Bend along the short edge (width direction)
+            //   - Flat: (width + 2*depth - 2*bd) x height
+            //   - Bend lines are vertical
             
-            // Let's interpret params:
-            // Width = Base width
-            // Height = Length of channel
-            // Depth = Height of the two legs (flanges)
-            
-            flatWidth = width + (2 * depth) - (2 * bd);
-            // Bend lines run along the Height
-            
-            const flangeFlat = depth - (bd/2); // approximate for vis
-            
-            bendLines.push({
-                x1: flangeFlat, y1: 0,
-                x2: flangeFlat, y2: height,
-                type: 'UP'
-            });
-            bendLines.push({
-                x1: flatWidth - flangeFlat, y1: 0,
-                x2: flatWidth - flangeFlat, y2: height,
-                type: 'UP'
-            });
+            if (params.bendAxis === 'SHORT') {
+                // ㄇ字型：沿宽度方向展开
+                flatWidth = width + (2 * depth) - (2 * bd);
+                flatHeight = height;
+                
+                const flangeFlatShort = depth - (bd/2);
+                
+                bendLines.push({
+                    x1: flangeFlatShort, y1: 0,
+                    x2: flangeFlatShort, y2: height,
+                    type: 'UP'
+                });
+                bendLines.push({
+                    x1: flatWidth - flangeFlatShort, y1: 0,
+                    x2: flatWidth - flangeFlatShort, y2: height,
+                    type: 'UP'
+                });
+            } else {
+                // 水槽型（默认）：沿高度方向展开
+                flatWidth = width;
+                flatHeight = height + (2 * depth) - (2 * bd);
+                
+                const flangeFlatLong = depth - (bd/2);
+                
+                bendLines.push({
+                    x1: 0, y1: flangeFlatLong,
+                    x2: width, y2: flangeFlatLong,
+                    type: 'UP'
+                });
+                bendLines.push({
+                    x1: 0, y1: flatHeight - flangeFlatLong,
+                    x2: width, y2: flatHeight - flangeFlatLong,
+                    type: 'UP'
+                });
+            }
             break;
 
         case PartType.BOX_PANEL:

@@ -1,14 +1,97 @@
-import React, { useMemo, useRef } from 'react';
-import { SheetMetalParams, PartType } from '../types';
+import React, { useMemo, useRef, useCallback } from 'react';
+import { SheetMetalParams, PartType, Hole } from '../types';
 import { calculateFlatPattern } from '../utils/calculation';
 
 interface Props {
   params: SheetMetalParams;
+  onChange?: (updates: Partial<SheetMetalParams>) => void;
 }
 
-export const FlatPatternViewer: React.FC<Props> = ({ params }) => {
+const expandHoleArray = (params: SheetMetalParams): Hole[] => {
+  const holes: Hole[] = [...(params.holes || [])];
+  
+  if (params.holeArray) {
+    const { startX, startY, spacing, count, diameter, face } = params.holeArray;
+    for (let i = 0; i < count; i++) {
+      holes.push({
+        type: 'CIRCLE',
+        x: startX + i * spacing,
+        y: startY,
+        diameter,
+        face: face || 'MAIN',
+      });
+    }
+  }
+  
+  return holes;
+};
+
+export const FlatPatternViewer: React.FC<Props> = ({ params, onChange }) => {
   const result = useMemo(() => calculateFlatPattern(params), [params]);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const handleDimensionClick = useCallback((label: string, currentValue: number, field: string) => {
+    if (!onChange) return;
+    const input = prompt(`修改 ${label}:`, currentValue.toString());
+    if (input !== null) {
+      const newValue = parseFloat(input);
+      if (!isNaN(newValue) && newValue > 0) {
+        // Handle nested fields like 'holeArray.startX'
+        if (field.startsWith('holeArray.')) {
+          const holeField = field.split('.')[1];
+          onChange({
+            holeArray: {
+              ...params.holeArray!,
+              [holeField]: newValue,
+            }
+          });
+        } else {
+          onChange({ [field]: newValue });
+        }
+      }
+    }
+  }, [onChange, params.holeArray]);
+
+  // Handle right margin click with reverse derivation
+  const handleRightMarginClick = useCallback(() => {
+    if (!onChange || !params.holeArray) return;
+    
+    const { startX, spacing, count } = params.holeArray;
+    const lastHoleX = startX + (count - 1) * spacing;
+    const currentEndMargin = params.width - lastHoleX;
+    
+    const input = prompt(`修改右侧边距:`, currentEndMargin.toFixed(1));
+    if (input !== null) {
+      const newEndMargin = parseFloat(input);
+      if (!isNaN(newEndMargin) && newEndMargin > 0) {
+        // Reverse derivation: new width = lastHoleX + newEndMargin
+        const newWidth = lastHoleX + newEndMargin;
+        onChange({ width: Math.round(newWidth * 10) / 10 });
+      }
+    }
+  }, [onChange, params.holeArray, params.width]);
+
+  // Handle top/bottom margin click
+  const handleVerticalMarginClick = useCallback((type: 'top' | 'bottom') => {
+    if (!onChange || !params.holeArray) return;
+    
+    const { startY } = params.holeArray;
+    const currentMargin = type === 'top' ? params.height - startY : startY;
+    
+    const input = prompt(`修改${type === 'top' ? '上' : '下'}方边距:`, currentMargin.toFixed(1));
+    if (input !== null) {
+      const newMargin = parseFloat(input);
+      if (!isNaN(newMargin) && newMargin > 0) {
+        const newStartY = type === 'top' ? params.height - newMargin : newMargin;
+        onChange({
+          holeArray: {
+            ...params.holeArray,
+            startY: Math.round(newStartY * 10) / 10,
+          }
+        });
+      }
+    }
+  }, [onChange, params.holeArray, params.height]);
 
   // Add padding for dimensions
   const padding = 60;
@@ -121,51 +204,64 @@ export const FlatPatternViewer: React.FC<Props> = ({ params }) => {
             ))}
 
             {/* Holes */}
-            {params.holes && params.holes.map((hole, i) => {
+            {expandHoleArray(params).map((hole, i) => {
               // Map hole coordinates (from part drawing) to SVG flat pattern space.
               // SVG origin: top-left of the flat blank.
               // Hole x/y from AI: measured from the bottom-left corner of the FACE they are on.
               let cx = hole.x;
               let cy = hole.y;
 
-              const { type, width, height, depth, flangeLength } = params;
-              // Approximate flatten position of bend line for L-Bracket
-              const bendLineY = height; // simplified: bend line is at y = height from top
+              const { type, width, height, depth, flangeLength, bendAxis } = params;
 
               if (type === PartType.FLAT_PANEL) {
                 // Y from bottom → convert to SVG Y from top
                 cy = result.flatHeight - hole.y;
 
               } else if (type === PartType.L_BRACKET) {
+                const bendLineY = height;
                 if (!hole.face || hole.face === 'MAIN') {
-                  // MAIN face occupies SVG Y: 0 → bendLineY
-                  // hole.y is measured from the BOTTOM of main face (= bend edge), going up
                   cy = bendLineY - hole.y;
                 } else {
-                  // FLANGE face occupies SVG Y: bendLineY → flatHeight
-                  // hole.y is measured from the FREE (outer) edge of the flange, going inward
                   cy = result.flatHeight - hole.y;
                 }
 
               } else if (type === PartType.U_CHANNEL) {
-                // U-Channel flat layout (horizontal): [LEFT_FLANGE | MAIN | RIGHT_FLANGE]
-                // width(=230) runs horizontally, height(=25) runs vertically, depth(=15) = flange size
-                // Bend lines are vertical at x ≈ depth and x ≈ depth+width
-                const flangeFlat = depth; // approximate flange strip width in flat
+                const bd = params.bendRadius + params.materialThickness * params.kFactor;
+                const flangeFlatShort = depth - bd;
 
-                if (!hole.face || hole.face === 'MAIN') {
-                  // MAIN section: starts at flangeFlat horizontally
-                  cx = flangeFlat + hole.x;
-                  cy = result.flatHeight - hole.y;
-                } else if (hole.face === 'FLANGE_LEFT' || hole.face === 'FLANGE_TOP') {
-                  // Left flange strip: x from 0 to flangeFlat
-                  // hole.x = along channel length, hole.y = from free edge (0) toward bend (depth)
-                  cx = flangeFlat - hole.y; // free edge at x=0, bend at x=flangeFlat
-                  cy = result.flatHeight - hole.x;
-                } else if (hole.face === 'FLANGE_RIGHT' || hole.face === 'FLANGE_BOTTOM') {
-                  // Right flange strip: x from flangeFlat+width to flatWidth
-                  cx = flangeFlat + width + hole.y; // bend at left, free edge at right
-                  cy = result.flatHeight - hole.x;
+                if (bendAxis === 'SHORT') {
+                  // ㄇ字型：水平展开 [LEFT_FLANGE | MAIN | RIGHT_FLANGE]
+                  // Bend lines are vertical
+                  if (!hole.face || hole.face === 'MAIN') {
+                    cx = flangeFlatShort + hole.x;
+                    cy = result.flatHeight - hole.y;
+                  } else if (hole.face === 'FLANGE_LEFT') {
+                    cx = flangeFlatShort - hole.y;
+                    cy = result.flatHeight - hole.x;
+                  } else if (hole.face === 'FLANGE_RIGHT') {
+                    cx = flangeFlatShort + width + hole.y;
+                    cy = result.flatHeight - hole.x;
+                  }
+                } else {
+                  // 水槽型（LONG）：垂直展开 [TOP_FLANGE / MAIN / BOTTOM_FLANGE]
+                  // Bend lines are horizontal
+                  // 使用精准的折弯扣除后法兰高度
+                  const flangeFlatLong = depth - bd / 2;
+
+                  if (!hole.face || hole.face === 'MAIN') {
+                    // MAIN face: cx 直接等于 hole.x（水平居中）
+                    // cy = flangeFlatLong + height - hole.y
+                    cx = hole.x;
+                    cy = (flangeFlatLong + height) - hole.y;
+                  } else if (hole.face === 'FLANGE_TOP') {
+                    // Top flange: y from 0 to flangeFlatLong
+                    cx = hole.x;
+                    cy = flangeFlatLong - hole.y;
+                  } else if (hole.face === 'FLANGE_BOTTOM') {
+                    // Bottom flange: y from flangeFlatLong+height to flatHeight
+                    cx = hole.x;
+                    cy = (flangeFlatLong + height) + hole.y;
+                  }
                 }
 
               } else {
@@ -210,12 +306,21 @@ export const FlatPatternViewer: React.FC<Props> = ({ params }) => {
               }
             })}
 
-            {/* Dimensions Annotations */}
+            {/* Dimensions Annotations - Clickable */}
             {/* Overall Width */}
             <line x1="0" y1={-20} x2={result.flatWidth} y2={-20} stroke="#94a3b8" strokeWidth="1" />
             <line x1="0" y1={-25} x2="0" y2={-15} stroke="#94a3b8" strokeWidth="1" />
             <line x1={result.flatWidth} y1={-25} x2={result.flatWidth} y2={-15} stroke="#94a3b8" strokeWidth="1" />
-            <text x={result.flatWidth/2} y={-30} fill="#94a3b8" fontSize="12" textAnchor="middle" fontFamily="monospace">
+            <text 
+              x={result.flatWidth/2} 
+              y={-30} 
+              fill={onChange ? "#22d3ee" : "#94a3b8"} 
+              fontSize="12" 
+              textAnchor="middle" 
+              fontFamily="monospace"
+              style={{ cursor: onChange ? 'pointer' : 'default' }}
+              onClick={() => handleDimensionClick('总长度 (Width)', params.width, 'width')}
+            >
               {result.flatWidth.toFixed(1)} mm
             </text>
 
@@ -223,9 +328,121 @@ export const FlatPatternViewer: React.FC<Props> = ({ params }) => {
             <line x1={-20} y1="0" x2={-20} y2={result.flatHeight} stroke="#94a3b8" strokeWidth="1" />
             <line x1={-25} y1="0" x2={-15} y2="0" stroke="#94a3b8" strokeWidth="1" />
             <line x1={-25} y1={result.flatHeight} x2={-15} y2={result.flatHeight} stroke="#94a3b8" strokeWidth="1" />
-            <text x={-30} y={result.flatHeight/2} fill="#94a3b8" fontSize="12" textAnchor="middle" transform={`rotate(-90, -30, ${result.flatHeight/2})`} fontFamily="monospace">
+            <text 
+              x={-30} 
+              y={result.flatHeight/2} 
+              fill={onChange ? "#22d3ee" : "#94a3b8"} 
+              fontSize="12" 
+              textAnchor="middle" 
+              transform={`rotate(-90, -30, ${result.flatHeight/2})`} 
+              fontFamily="monospace"
+              style={{ cursor: onChange ? 'pointer' : 'default' }}
+              onClick={() => handleDimensionClick('截面高度 (Height)', params.height, 'height')}
+            >
               {result.flatHeight.toFixed(1)} mm
             </text>
+
+            {/* Hole Array Dimensions - if present */}
+            {params.holeArray && (() => {
+              const { startX, startY, spacing, count } = params.holeArray;
+              const lastHoleX = startX + (count - 1) * spacing;
+              const endMargin = params.width - lastHoleX;
+              const holeY = result.flatHeight / 2; // Center of main face for LONG bend
+              
+              return (
+                <>
+                  {/* Left margin (startX) */}
+                  <line x1="0" y1={result.flatHeight + 15} x2={startX} y2={result.flatHeight + 15} stroke="#f59e0b" strokeWidth="1" strokeDasharray="4,2" />
+                  <line x1="0" y1={result.flatHeight + 10} x2="0" y2={result.flatHeight + 20} stroke="#f59e0b" strokeWidth="1" />
+                  <line x1={startX} y1={result.flatHeight + 10} x2={startX} y2={result.flatHeight + 20} stroke="#f59e0b" strokeWidth="1" />
+                  <text 
+                    x={startX / 2} 
+                    y={result.flatHeight + 28} 
+                    fill={onChange ? "#f59e0b" : "#94a3b8"} 
+                    fontSize="10" 
+                    textAnchor="middle" 
+                    fontFamily="monospace"
+                    style={{ cursor: onChange ? 'pointer' : 'default' }}
+                    onClick={() => handleDimensionClick('左侧边距', startX, 'holeArray.startX')}
+                  >
+                    L:{startX.toFixed(1)}
+                  </text>
+
+                  {/* Right margin (endMargin) - with reverse derivation */}
+                  <line x1={lastHoleX} y1={result.flatHeight + 15} x2={params.width} y2={result.flatHeight + 15} stroke="#10b981" strokeWidth="1" strokeDasharray="4,2" />
+                  <line x1={lastHoleX} y1={result.flatHeight + 10} x2={lastHoleX} y2={result.flatHeight + 20} stroke="#10b981" strokeWidth="1" />
+                  <line x1={params.width} y1={result.flatHeight + 10} x2={params.width} y2={result.flatHeight + 20} stroke="#10b981" strokeWidth="1" />
+                  <text 
+                    x={(lastHoleX + params.width) / 2} 
+                    y={result.flatHeight + 28} 
+                    fill={onChange ? "#10b981" : "#94a3b8"} 
+                    fontSize="10" 
+                    textAnchor="middle" 
+                    fontFamily="monospace"
+                    style={{ cursor: onChange ? 'pointer' : 'default' }}
+                    onClick={handleRightMarginClick}
+                  >
+                    R:{endMargin.toFixed(1)}
+                  </text>
+
+                  {/* Top margin (height - startY) */}
+                  <line x1={result.flatWidth + 15} y1="0" x2={result.flatWidth + 15} y2={holeY - startY} stroke="#8b5cf6" strokeWidth="1" strokeDasharray="4,2" />
+                  <line x1={result.flatWidth + 10} y1="0" x2={result.flatWidth + 20} y2="0" stroke="#8b5cf6" strokeWidth="1" />
+                  <line x1={result.flatWidth + 10} y1={holeY - startY} x2={result.flatWidth + 20} y2={holeY - startY} stroke="#8b5cf6" strokeWidth="1" />
+                  <text 
+                    x={result.flatWidth + 28} 
+                    y={(holeY - startY) / 2} 
+                    fill={onChange ? "#8b5cf6" : "#94a3b8"} 
+                    fontSize="10" 
+                    textAnchor="middle" 
+                    fontFamily="monospace"
+                    transform={`rotate(90, ${result.flatWidth + 28}, ${(holeY - startY) / 2})`}
+                    style={{ cursor: onChange ? 'pointer' : 'default' }}
+                    onClick={() => handleVerticalMarginClick('top')}
+                  >
+                    T:{(params.height - startY).toFixed(1)}
+                  </text>
+
+                  {/* Bottom margin (startY) */}
+                  <line x1={result.flatWidth + 15} y1={holeY + startY} x2={result.flatWidth + 15} y2={result.flatHeight} stroke="#8b5cf6" strokeWidth="1" strokeDasharray="4,2" />
+                  <line x1={result.flatWidth + 10} y1={holeY + startY} x2={result.flatWidth + 20} y2={holeY + startY} stroke="#8b5cf6" strokeWidth="1" />
+                  <text 
+                    x={result.flatWidth + 28} 
+                    y={(holeY + startY + result.flatHeight) / 2} 
+                    fill={onChange ? "#8b5cf6" : "#94a3b8"} 
+                    fontSize="10" 
+                    textAnchor="middle" 
+                    fontFamily="monospace"
+                    transform={`rotate(90, ${result.flatWidth + 28}, ${(holeY + startY + result.flatHeight) / 2})`}
+                    style={{ cursor: onChange ? 'pointer' : 'default' }}
+                    onClick={() => handleVerticalMarginClick('bottom')}
+                  >
+                    B:{startY.toFixed(1)}
+                  </text>
+
+                  {/* Spacing between holes */}
+                  {count > 1 && (
+                    <>
+                      <line x1={startX} y1={-35} x2={startX + spacing} y2={-35} stroke="#06b6d4" strokeWidth="1" />
+                      <line x1={startX} y1={-40} x2={startX} y2={-30} stroke="#06b6d4" strokeWidth="1" />
+                      <line x1={startX + spacing} y1={-40} x2={startX + spacing} y2={-30} stroke="#06b6d4" strokeWidth="1" />
+                      <text 
+                        x={startX + spacing / 2} 
+                        y={-45} 
+                        fill={onChange ? "#06b6d4" : "#94a3b8"} 
+                        fontSize="9" 
+                        textAnchor="middle" 
+                        fontFamily="monospace"
+                        style={{ cursor: onChange ? 'pointer' : 'default' }}
+                        onClick={() => handleDimensionClick('孔间距', spacing, 'holeArray.spacing')}
+                      >
+                        P:{spacing.toFixed(1)}
+                      </text>
+                    </>
+                  )}
+                </>
+              );
+            })()}
             
           </g>
         </svg>

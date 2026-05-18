@@ -17,6 +17,17 @@ export interface Hole {
   face?: 'MAIN' | 'FLANGE_LEFT' | 'FLANGE_RIGHT' | 'FLANGE_TOP' | 'FLANGE_BOTTOM';
 }
 
+export interface LinearHoleArray {
+  startX: number;
+  startY: number;
+  spacing: number;
+  count: number;
+  diameter: number;
+  face?: 'MAIN' | 'FLANGE_LEFT' | 'FLANGE_RIGHT' | 'FLANGE_TOP' | 'FLANGE_BOTTOM';
+}
+
+export type BendAxis = 'LONG' | 'SHORT';
+
 export interface SheetMetalParams {
   type: PartType;
   width: number;
@@ -26,8 +37,10 @@ export interface SheetMetalParams {
   materialThickness: number;
   bendRadius: number;
   kFactor: number; // Default usually 0.33 or 0.5
+  bendAxis?: BendAxis; // For U-Channel: LONG (水槽) or SHORT (ㄇ字型)
   notes?: string;
   holes?: Hole[];
+  holeArray?: LinearHoleArray;
 }
 
 export interface UnfoldingResult {

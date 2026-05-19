@@ -25,31 +25,42 @@ const PanelWithHoles: React.FC<{
   holes?: Hole[],
   position?: [number, number, number],
   rotation?: [number, number, number]
-}> = ({ width, height, thickness, holes, position, rotation }) => {
+}> = ({ width: w, height: h, thickness: t, holes, position, rotation }) => {
+  const width = Math.max(w || 10, 1);
+  const height = Math.max(h || 10, 1);
+  const thickness = Math.max(t || 1, 0.1);
   
   const geometry = useMemo(() => {
     const shape = new THREE.Shape();
-    // Draw the main rectangle (centered at 0,0 for easier rotation later)
-    // Actually, let's draw it from -w/2, -h/2 to w/2, h/2
     shape.moveTo(-width / 2, -height / 2);
     shape.lineTo(width / 2, -height / 2);
     shape.lineTo(width / 2, height / 2);
     shape.lineTo(-width / 2, height / 2);
     shape.lineTo(-width / 2, -height / 2);
 
-    // Add holes
-    if (holes) {
+    if (holes && holes.length > 0) {
+      if (!shape.holes) {
+        (shape as any).holes = [];
+      }
       holes.forEach(hole => {
-        // Hole coordinates are usually from bottom-left (0,0) in our params
-        // Convert to center-relative
+        if (typeof hole.x !== 'number' || typeof hole.y !== 'number' || 
+            isNaN(hole.x) || isNaN(hole.y)) {
+          return;
+        }
+
         const hx = hole.x - width / 2;
         const hy = hole.y - height / 2;
 
+        if (isNaN(hx) || isNaN(hy)) {
+          return;
+        }
+
         const holePath = new THREE.Path();
-        if (hole.type === 'CIRCLE' && hole.diameter) {
+        if (hole.type === 'CIRCLE' && hole.diameter && hole.diameter > 0) {
           const r = hole.diameter / 2;
           holePath.absarc(hx, hy, r, 0, Math.PI * 2, false);
-        } else if (hole.type === 'RECTANGLE' && hole.width && hole.height) {
+        } else if (hole.type === 'RECTANGLE' && hole.width && hole.height && 
+                   hole.width > 0 && hole.height > 0) {
           const hw = hole.width;
           const hh = hole.height;
           holePath.moveTo(hx - hw/2, hy - hh/2);
@@ -57,6 +68,8 @@ const PanelWithHoles: React.FC<{
           holePath.lineTo(hx + hw/2, hy + hh/2);
           holePath.lineTo(hx - hw/2, hy + hh/2);
           holePath.lineTo(hx - hw/2, hy - hh/2);
+        } else {
+          return;
         }
         shape.holes.push(holePath);
       });
@@ -89,15 +102,17 @@ const expandHoleArray = (params: SheetMetalParams): Hole[] => {
   const holes: Hole[] = [...(params.holes || [])];
   
   if (params.holeArray) {
-    const { startX, startY, spacing, count, diameter, face } = params.holeArray;
-    for (let i = 0; i < count; i++) {
-      holes.push({
-        type: 'CIRCLE',
-        x: startX + i * spacing,
-        y: startY,
-        diameter,
-        face: face || 'MAIN',
-      });
+    const { startX = 0, startY = 0, spacing = 0, count = 0, diameter = 5, face } = params.holeArray;
+    if (count > 0 && spacing > 0) {
+      for (let i = 0; i < count; i++) {
+        holes.push({
+          type: 'CIRCLE',
+          x: startX + i * spacing,
+          y: startY,
+          diameter,
+          face: face || 'MAIN',
+        });
+      }
     }
   }
   
@@ -105,9 +120,13 @@ const expandHoleArray = (params: SheetMetalParams): Hole[] => {
 };
 
 const PartGeometry: React.FC<{ params: SheetMetalParams }> = ({ params }) => {
-  const { type, width, height, depth, flangeLength, materialThickness } = params;
+  const { type } = params;
+  const width = params.width || 100;
+  const height = params.height || 100;
+  const depth = params.depth || 50;
+  const flangeLength = params.flangeLength || 20;
   const holes = expandHoleArray(params);
-  const t = materialThickness || 1; 
+  const t = params.materialThickness || 1; 
 
   switch (type) {
     case PartType.FLAT_PANEL:

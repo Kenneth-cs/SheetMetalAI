@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { SheetMetalParams } from './types';
 import { DEFAULT_PARAMS } from './constants';
@@ -6,15 +6,16 @@ import { FlatPatternViewer } from './components/FlatPatternViewer';
 import { ThreeDViewer } from './components/ThreeDViewer';
 import { ParameterControls } from './components/ParameterControls';
 import { ViewCropper } from './components/ViewCropper';
+import { CopilotChat } from './components/CopilotChat';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { analyzeDrawing, detectViewBoxes, listAvailableModels, ViewFile, DetectedViewBoxes } from './services/qwenService';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
-// View slot definition
 interface ViewSlot {
   key: 'front' | 'side' | 'plan';
-  label: string;       // Chinese label shown in UI
-  viewLabel: string;   // Label sent to AI
+  label: string;
+  viewLabel: string;
   required: boolean;
 }
 
@@ -24,7 +25,6 @@ const VIEW_SLOTS: ViewSlot[] = [
   { key: 'plan',  label: '俯视图', viewLabel: '俯视图 (Plan View) - 顶部，显示宽度和孔位排布',   required: false },
 ];
 
-// Uploaded file for a single view slot
 interface SlotFile {
   name: string;
   data: string;
@@ -35,6 +35,26 @@ const App: React.FC = () => {
   const [params, setParams] = useState<SheetMetalParams>(DEFAULT_PARAMS);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadMode, setUploadMode] = useState<'split' | 'smart' | 'assist'>('split');
+
+  const handleCopilotParamsUpdate = useCallback((newParams: Record<string, any>) => {
+    const extractedParams = newParams.extractedParams || newParams;
+    setParams(prev => {
+      const updated = {
+        ...prev,
+        type: extractedParams.identifiedType || prev.type,
+        width: extractedParams.width ?? prev.width,
+        height: extractedParams.height ?? prev.height,
+        depth: extractedParams.depth ?? prev.depth,
+        flangeLength: extractedParams.flangeLength ?? prev.flangeLength,
+        materialThickness: extractedParams.materialThickness ?? prev.materialThickness,
+        bendRadius: extractedParams.bendRadius ?? prev.bendRadius,
+        bendAxis: extractedParams.bendAxis || prev.bendAxis,
+        holes: extractedParams.holes || prev.holes,
+        holeArray: extractedParams.holeArray || prev.holeArray,
+      };
+      return updated;
+    });
+  }, []);
 
   // One file per view slot (null = not uploaded yet)
   const [slotFiles, setSlotFiles] = useState<Record<string, SlotFile | null>>({
@@ -246,7 +266,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans flex flex-col">
       {/* Header */}
       <header className="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-10 shadow-lg">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
+        <div className="w-full px-6 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="bg-industrial-500 p-2 rounded text-white">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
@@ -264,10 +284,10 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="flex-1 w-full flex gap-0">
         
         {/* Left Column: Input & AI */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="w-[380px] min-w-[380px] space-y-5 p-5 overflow-y-auto border-r border-slate-800">
           {/* Upload Card */}
           <div className="bg-slate-900 border border-slate-700 rounded-lg p-4">
             <h3 className="text-sm font-semibold text-slate-300 mb-3">1. 上传图纸 (Upload Drawings)</h3>
@@ -448,10 +468,10 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Center/Right Column: Visualization */}
-        <div className="lg:col-span-9 flex flex-col gap-6 h-[80vh] lg:h-auto">
+        {/* Center Column: Visualization */}
+        <div className="flex-1 flex flex-col h-[calc(100vh-72px)]">
           {/* View Mode Tabs */}
-          <div className="flex gap-2 border-b border-slate-700 pb-1">
+          <div className="flex gap-2 border-b border-slate-800 px-4 pt-2">
             <button 
               onClick={() => setViewMode('3d')}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${viewMode === '3d' ? 'bg-slate-800 text-industrial-400 border-t border-x border-slate-700' : 'text-slate-500 hover:text-slate-300'}`}
@@ -467,21 +487,23 @@ const App: React.FC = () => {
           </div>
 
           {/* Main Viewer */}
-          <div className="flex-1 min-h-[500px] relative">
-            {viewMode === '3d' ? (
-              <ThreeDViewer params={params} />
-            ) : (
-              <FlatPatternViewer 
-                params={params} 
-                onChange={(updates) => setParams(prev => ({ ...prev, ...updates }))}
-              />
-            )}
+          <div className="flex-1 p-4">
+            <ErrorBoundary key={viewMode}>
+              {viewMode === '3d' ? (
+                <ThreeDViewer params={params} />
+              ) : (
+                <FlatPatternViewer 
+                  params={params} 
+                  onChange={(updates) => setParams(prev => ({ ...prev, ...updates }))}
+                />
+              )}
+            </ErrorBoundary>
           </div>
+        </div>
 
-          {/* Mobile Params (Visible only on small screens) */}
-          <div className="lg:hidden">
-            <ParameterControls params={params} onChange={setParams} />
-          </div>
+        {/* Right Column: Copilot Chat */}
+        <div className="w-[680px] min-w-[680px] h-[calc(100vh-72px)] border-l border-slate-800">
+          <CopilotChat onParamsUpdate={handleCopilotParamsUpdate} />
         </div>
 
       </main>

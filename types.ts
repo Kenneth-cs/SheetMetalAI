@@ -41,6 +41,7 @@ export interface SheetMetalParams {
   notes?: string;
   holes?: Hole[];
   holeArray?: LinearHoleArray;
+  manufacturingAdvice?: string;
 }
 
 export interface UnfoldingResult {

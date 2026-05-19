@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { SheetMetalParams } from './types';
+import { SheetMetalParams, PartType } from './types';
 import { DEFAULT_PARAMS } from './constants';
 import { FlatPatternViewer } from './components/FlatPatternViewer';
 import { ThreeDViewer } from './components/ThreeDViewer';
@@ -31,29 +31,192 @@ interface SlotFile {
   mimeType: string;
 }
 
+interface CopilotCropData {
+  imageData: string;
+  views: Array<{
+    type: string;
+    label: string;
+    box: [number, number, number, number];
+  }>;
+}
+
 const App: React.FC = () => {
   const [params, setParams] = useState<SheetMetalParams>(DEFAULT_PARAMS);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadMode, setUploadMode] = useState<'split' | 'smart' | 'assist'>('split');
+  const [copilotCropData, setCopilotCropData] = useState<CopilotCropData | null>(null);
+
+
+
+  const handleCopilotAdjustView = useCallback((data?: CopilotCropData) => {
+    if (data) {
+      setCopilotCropData(data);
+    }
+  }, []);
+
+  const confirmViewsRef = useRef<((files: File[]) => Promise<void>) | null>(null);
+  const sendMessageRef = useRef<((content: string) => void) | null>(null);
+
+  const validateSheetMetalParams = useCallback((updates: Partial<SheetMetalParams>): { valid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+
+    if (updates.width !== undefined) {
+      if (typeof updates.width !== 'number' || isNaN(updates.width) || updates.width <= 0) {
+        errors.push('宽度 (width) 必须是正数');
+      }
+    }
+    if (updates.height !== undefined) {
+      if (typeof updates.height !== 'number' || isNaN(updates.height) || updates.height <= 0) {
+        errors.push('高度 (height) 必须是正数');
+      }
+    }
+    if (updates.depth !== undefined) {
+      if (typeof updates.depth !== 'number' || isNaN(updates.depth) || updates.depth < 0) {
+        errors.push('深度 (depth) 不能为负数');
+      }
+    }
+    if (updates.flangeLength !== undefined) {
+      if (typeof updates.flangeLength !== 'number' || isNaN(updates.flangeLength) || updates.flangeLength < 0) {
+        errors.push('翼缘长度 (flangeLength) 不能为负数');
+      }
+    }
+    if (updates.materialThickness !== undefined) {
+      if (typeof updates.materialThickness !== 'number' || isNaN(updates.materialThickness) || updates.materialThickness < 0.5 || updates.materialThickness > 20) {
+        errors.push('板厚 (materialThickness) 必须在 0.5-20mm 范围内');
+      }
+    }
+    if (updates.bendRadius !== undefined) {
+      if (typeof updates.bendRadius !== 'number' || isNaN(updates.bendRadius) || updates.bendRadius <= 0) {
+        errors.push('折弯半径 (bendRadius) 必须是正数');
+      }
+    }
+    if (updates.kFactor !== undefined) {
+      if (typeof updates.kFactor !== 'number' || isNaN(updates.kFactor) || updates.kFactor < 0 || updates.kFactor > 1) {
+        errors.push('K因子 (kFactor) 必须在 0-1 范围内');
+      }
+    }
+    if (updates.type !== undefined) {
+      const validTypes = Object.values(PartType);
+      if (!validTypes.includes(updates.type)) {
+        errors.push(`零件类型 (type) 必须是以下之一: ${validTypes.join(', ')}`);
+      }
+    }
+    if (updates.holeArray) {
+      const ha = updates.holeArray;
+      if (typeof ha !== 'object') {
+        errors.push('holeArray 必须是对象');
+      } else {
+        if (ha.count !== undefined && (typeof ha.count !== 'number' || !Number.isInteger(ha.count) || ha.count <= 0)) {
+          errors.push('holeArray.count 必须是正整数');
+        }
+        if (ha.spacing !== undefined && (typeof ha.spacing !== 'number' || ha.spacing <= 0)) {
+          errors.push('holeArray.spacing 必须是正数');
+        }
+        if (ha.diameter !== undefined && (typeof ha.diameter !== 'number' || ha.diameter <= 0)) {
+          errors.push('holeArray.diameter 必须是正数');
+        }
+        if (ha.startX !== undefined && (typeof ha.startX !== 'number' || isNaN(ha.startX))) {
+          errors.push('holeArray.startX 必须是数字');
+        }
+        if (ha.startY !== undefined && (typeof ha.startY !== 'number' || isNaN(ha.startY))) {
+          errors.push('holeArray.startY 必须是数字');
+        }
+      }
+    }
+    if (updates.holes && Array.isArray(updates.holes)) {
+      for (let i = 0; i < updates.holes.length; i++) {
+        const hole = updates.holes[i];
+        if (typeof hole.x !== 'number' || isNaN(hole.x)) {
+          errors.push(`holes[${i}].x 必须是数字`);
+        }
+        if (typeof hole.y !== 'number' || isNaN(hole.y)) {
+          errors.push(`holes[${i}].y 必须是数字`);
+        }
+        if (hole.type === 'CIRCLE' && (hole.diameter === undefined || typeof hole.diameter !== 'number' || hole.diameter <= 0)) {
+          errors.push(`holes[${i}].diameter 必须是正数`);
+        }
+      }
+    }
+
+    return { valid: errors.length === 0, errors };
+  }, []);
+
+  const updateSheetMetalParams = useCallback((updates: Partial<SheetMetalParams>, source: 'ai' | 'ui' = 'ui') => {
+    const validation = validateSheetMetalParams(updates);
+
+    if (!validation.valid) {
+      const errorMsg = validation.errors.join('；');
+      console.error('参数校验失败:', errorMsg);
+
+      if (source === 'ai' && sendMessageRef.current) {
+        sendMessageRef.current(`⚠️ AI 生成的参数格式有误，请重试。\n错误详情：${errorMsg}`);
+      }
+      return false;
+    }
+
+    setParams(prev => ({ ...prev, ...updates }));
+    return true;
+  }, [validateSheetMetalParams]);
 
   const handleCopilotParamsUpdate = useCallback((newParams: Record<string, any>) => {
     const extractedParams = newParams.extractedParams || newParams;
-    setParams(prev => {
-      const updated = {
-        ...prev,
-        type: extractedParams.identifiedType || prev.type,
-        width: extractedParams.width ?? prev.width,
-        height: extractedParams.height ?? prev.height,
-        depth: extractedParams.depth ?? prev.depth,
-        flangeLength: extractedParams.flangeLength ?? prev.flangeLength,
-        materialThickness: extractedParams.materialThickness ?? prev.materialThickness,
-        bendRadius: extractedParams.bendRadius ?? prev.bendRadius,
-        bendAxis: extractedParams.bendAxis || prev.bendAxis,
-        holes: extractedParams.holes || prev.holes,
-        holeArray: extractedParams.holeArray || prev.holeArray,
-      };
-      return updated;
-    });
+
+    const updates: Partial<SheetMetalParams> = {};
+
+    if (extractedParams.identifiedType) {
+      updates.type = extractedParams.identifiedType;
+    }
+    if (extractedParams.width !== undefined && extractedParams.width !== null) {
+      updates.width = extractedParams.width;
+    }
+    if (extractedParams.height !== undefined && extractedParams.height !== null) {
+      updates.height = extractedParams.height;
+    }
+    if (extractedParams.depth !== undefined && extractedParams.depth !== null) {
+      updates.depth = extractedParams.depth;
+    }
+    if (extractedParams.flangeLength !== undefined && extractedParams.flangeLength !== null) {
+      updates.flangeLength = extractedParams.flangeLength;
+    }
+    if (extractedParams.materialThickness !== undefined && extractedParams.materialThickness !== null) {
+      updates.materialThickness = extractedParams.materialThickness;
+    }
+    if (extractedParams.bendRadius !== undefined && extractedParams.bendRadius !== null) {
+      updates.bendRadius = extractedParams.bendRadius;
+    }
+    if (extractedParams.bendAxis) {
+      updates.bendAxis = extractedParams.bendAxis;
+    }
+    if (extractedParams.holes) {
+      updates.holes = extractedParams.holes;
+    }
+    if (extractedParams.holeArray) {
+      updates.holeArray = extractedParams.holeArray;
+    }
+
+    updateSheetMetalParams(updates, 'ai');
+  }, [updateSheetMetalParams]);
+
+  const handleCropConfirmCallback = useCallback((sessionId: string, confirmViews: (files: File[]) => Promise<void>) => {
+    confirmViewsRef.current = confirmViews;
+  }, []);
+
+  const handleCropConfirm = useCallback((results: Array<{ data: string; mimeType: string; viewLabel: string }>) => {
+    setCopilotCropData(null);
+
+    if (confirmViewsRef.current && results.length > 0) {
+      const files: File[] = results.map((result, index) => {
+        const base64Data = result.data.includes(',') ? result.data.split(',')[1] : result.data;
+        const binaryStr = atob(base64Data);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        return new File([bytes], `cropped_${result.viewLabel || index}.png`, { type: result.mimeType || 'image/png' });
+      });
+
+      confirmViewsRef.current(files);
+    }
   }, []);
 
   // One file per view slot (null = not uploaded yet)
@@ -235,20 +398,18 @@ const App: React.FC = () => {
 
       setAiReasoning(result.reasoning);
 
-      // Merge AI results into current params
-      setParams(prev => ({
-        ...prev,
+      updateSheetMetalParams({
         type: result.identifiedType,
-        width: result.extractedParams.width || prev.width,
-        height: result.extractedParams.height || prev.height,
-        depth: result.extractedParams.depth || prev.depth,
-        flangeLength: result.extractedParams.flangeLength || prev.flangeLength,
-        materialThickness: result.extractedParams.materialThickness || prev.materialThickness,
-        bendRadius: result.extractedParams.bendRadius || prev.bendRadius,
-        bendAxis: result.extractedParams.bendAxis || prev.bendAxis || 'LONG',
+        width: result.extractedParams.width,
+        height: result.extractedParams.height,
+        depth: result.extractedParams.depth,
+        flangeLength: result.extractedParams.flangeLength,
+        materialThickness: result.extractedParams.materialThickness,
+        bendRadius: result.extractedParams.bendRadius,
+        bendAxis: result.extractedParams.bendAxis || 'LONG',
         holes: result.extractedParams.holes || [],
         holeArray: result.extractedParams.holeArray,
-      }));
+      }, 'ai');
 
       // Switch to 2D flat pattern after analysis so the result is immediately visible.
       // (Switching to 3D would be a no-op if already on 3D, and the canvas doesn't
@@ -464,7 +625,7 @@ const App: React.FC = () => {
 
           {/* Parameters Form (Desktop: In Left Col) */}
           <div className="hidden lg:block h-[calc(100vh-500px)]">
-             <ParameterControls params={params} onChange={setParams} />
+             <ParameterControls params={params} onChange={(updates) => updateSheetMetalParams(updates, 'ui')} />
           </div>
         </div>
 
@@ -494,7 +655,7 @@ const App: React.FC = () => {
               ) : (
                 <FlatPatternViewer 
                   params={params} 
-                  onChange={(updates) => setParams(prev => ({ ...prev, ...updates }))}
+                  onChange={(updates) => updateSheetMetalParams(updates, 'ui')}
                 />
               )}
             </ErrorBoundary>
@@ -503,10 +664,40 @@ const App: React.FC = () => {
 
         {/* Right Column: Copilot Chat */}
         <div className="w-[680px] min-w-[680px] h-[calc(100vh-72px)] border-l border-slate-800">
-          <CopilotChat onParamsUpdate={handleCopilotParamsUpdate} />
+          <CopilotChat 
+            onParamsUpdate={handleCopilotParamsUpdate}
+            onAdjustView={handleCopilotAdjustView}
+            onCropConfirm={handleCropConfirmCallback}
+            onSendMessageReady={(sendMsg) => { sendMessageRef.current = sendMsg; }}
+          />
         </div>
 
       </main>
+
+      {/* Copilot ViewCropper Modal */}
+      {copilotCropData && (
+        <ViewCropper
+          imageData={copilotCropData.imageData}
+          mimeType="image/png"
+          initialBoxes={copilotCropData.views.reduce((acc, v) => {
+            const normalizeValue = (val: number) => {
+              if (val > 1) return Math.min(val, 100);
+              return val * 100;
+            };
+            return {
+              ...acc,
+              [v.type]: {
+                x: normalizeValue(v.box[0]),
+                y: normalizeValue(v.box[1]),
+                width: normalizeValue(v.box[2]),
+                height: normalizeValue(v.box[3])
+              }
+            };
+          }, {} as any)}
+          onConfirm={handleCropConfirm}
+          onCancel={() => setCopilotCropData(null)}
+        />
+      )}
 
       {/* ViewCropper Modal for Assist Mode */}
       {assistStep === 'cropping' && detectedBoxes && slotFiles['full'] && (

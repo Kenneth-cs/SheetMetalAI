@@ -63,6 +63,9 @@ export const ViewCropper: React.FC<ViewCropperProps> = ({
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
 
   const getImageSrc = useCallback(() => {
+    if (imageData.startsWith('data:')) {
+      return imageData;
+    }
     return `data:${mimeType};base64,${imageData}`;
   }, [imageData, mimeType]);
 

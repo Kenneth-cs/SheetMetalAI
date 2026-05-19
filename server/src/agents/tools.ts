@@ -17,35 +17,47 @@ function getOpenAIClient(): OpenAI {
   return _openai;
 }
 
+export interface ModelCallResult {
+  content: string;
+  rawPrompt: string;
+  rawResponse: string;
+}
+
 export async function callVisionModel(
   imageBase64: string,
   mimeType: string,
   prompt: string,
   systemPrompt: string
-): Promise<string> {
+): Promise<ModelCallResult> {
   const client = getOpenAIClient();
+  const messages = [
+    { role: 'system' as const, content: systemPrompt },
+    {
+      role: 'user' as const,
+      content: [
+        { type: 'text' as const, text: prompt },
+        {
+          type: 'image_url' as const,
+          image_url: {
+            url: `data:${mimeType};base64,${imageBase64}`,
+          },
+        },
+      ],
+    },
+  ];
+
   const response = await client.chat.completions.create({
     model: 'qwen-vl-max',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          {
-            type: 'image_url',
-            image_url: {
-              url: `data:${mimeType};base64,${imageBase64}`,
-            },
-          },
-        ],
-      },
-    ],
+    messages,
     max_tokens: 2000,
     temperature: 0.1,
   });
 
-  return response.choices[0]?.message?.content || '';
+  const content = response.choices[0]?.message?.content || '';
+  const rawPrompt = JSON.stringify(messages, null, 2);
+  const rawResponse = JSON.stringify(response, null, 2);
+
+  return { content, rawPrompt, rawResponse };
 }
 
 export function calculateUnfoldLength(
@@ -106,19 +118,25 @@ export function validateHolePositions(
 export async function callTextModel(
   prompt: string,
   systemPrompt: string
-): Promise<string> {
+): Promise<ModelCallResult> {
   const client = getOpenAIClient();
+  const messages = [
+    { role: 'system' as const, content: systemPrompt },
+    { role: 'user' as const, content: prompt },
+  ];
+
   const response = await client.chat.completions.create({
     model: 'qwen-plus',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: prompt },
-    ],
+    messages,
     max_tokens: 1000,
     temperature: 0.1,
   });
 
-  return response.choices[0]?.message?.content || '';
+  const content = response.choices[0]?.message?.content || '';
+  const rawPrompt = JSON.stringify(messages, null, 2);
+  const rawResponse = JSON.stringify(response, null, 2);
+
+  return { content, rawPrompt, rawResponse };
 }
 
 export function imageToBase64(buffer: Buffer): string {

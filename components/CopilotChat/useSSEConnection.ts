@@ -24,7 +24,9 @@ export interface UseSSEConnectionReturn {
   workflow: WorkflowState;
   isProcessing: boolean;
   currentParams: Record<string, any> | null;
+  sessionId: string;
   sendMessage: (content: string, files?: File[]) => Promise<void>;
+  confirmViews: (files: File[]) => Promise<void>;
 }
 
 export function useSSEConnection(): UseSSEConnectionReturn {
@@ -201,12 +203,54 @@ export function useSSEConnection(): UseSSEConnectionReturn {
     [addMessage]
   );
 
+  const confirmViews = useCallback(
+    async (files: File[]) => {
+      setIsProcessing(true);
+
+      addMessage({
+        role: 'system',
+        content: '已确认视图，正在提取参数...',
+        status: 'complete',
+      });
+
+      try {
+        const formData = new FormData();
+        formData.append('sessionId', sessionIdRef.current);
+
+        files.forEach(file => {
+          formData.append('files', file);
+        });
+
+        const response = await fetch(`${API_BASE_URL}/api/agent/confirm-views`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error: ${response.status}`);
+        }
+
+      } catch (error: any) {
+        addMessage({
+          role: 'system',
+          content: `确认视图失败: ${error.message}`,
+          metadata: { isError: true },
+        });
+        setIsProcessing(false);
+        setWorkflow({ phase: 'error' });
+      }
+    },
+    [addMessage]
+  );
+
   return {
     messages,
     agentStatuses,
     workflow,
     isProcessing,
     currentParams,
+    sessionId: sessionIdRef.current,
     sendMessage,
+    confirmViews,
   };
 }

@@ -101,22 +101,33 @@ const PanelWithHoles: React.FC<{
 const expandHoleArray = (params: SheetMetalParams): Hole[] => {
   const holes: Hole[] = [...(params.holes || [])];
   
-  if (params.holeArray) {
+  if (params.holeArray && typeof params.holeArray === 'object') {
     const { startX = 0, startY = 0, spacing = 0, count = 0, diameter = 5, face } = params.holeArray;
-    if (count > 0 && spacing > 0) {
+    
+    if (typeof count === 'number' && Number.isInteger(count) && count > 0 && 
+        typeof spacing === 'number' && spacing > 0 &&
+        typeof startX === 'number' && !isNaN(startX) &&
+        typeof startY === 'number' && !isNaN(startY) &&
+        typeof diameter === 'number' && diameter > 0) {
       for (let i = 0; i < count; i++) {
-        holes.push({
-          type: 'CIRCLE',
-          x: startX + i * spacing,
-          y: startY,
-          diameter,
-          face: face || 'MAIN',
-        });
+        const x = startX + i * spacing;
+        if (typeof x === 'number' && !isNaN(x)) {
+          holes.push({
+            type: 'CIRCLE',
+            x,
+            y: startY,
+            diameter,
+            face: face || 'MAIN',
+          });
+        }
       }
     }
   }
   
-  return holes;
+  return holes.filter(h => 
+    typeof h.x === 'number' && !isNaN(h.x) && 
+    typeof h.y === 'number' && !isNaN(h.y)
+  );
 };
 
 const PartGeometry: React.FC<{ params: SheetMetalParams }> = ({ params }) => {

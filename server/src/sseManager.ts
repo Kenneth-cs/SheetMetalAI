@@ -40,11 +40,12 @@ class SSEManager {
     }
   }
 
-  sendMessage(sessionId: string, agent: AgentRole, content: string): void {
+  sendMessage(sessionId: string, agent: AgentRole, content: string, metadata?: Record<string, any>): void {
     this.sendEvent(sessionId, {
       type: 'agent_message',
       agent,
       content,
+      metadata,
     });
   }
 

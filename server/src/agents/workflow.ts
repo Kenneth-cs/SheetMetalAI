@@ -1,6 +1,6 @@
 import { AgentContext, AgentRole, IntentResult, ChatHistoryEntry } from '../types.js';
 import { sseManager } from '../sseManager.js';
-import { callVisionModel, callTextModel, imageToBase64, extractJSON } from './tools.js';
+import { callVisionModel, callTextModel, imageToBase64, extractJSON, ModelCallResult } from './tools.js';
 import { sessionStore } from '../store/sessionStore.js';
 import { ragService } from '../services/ragService.js';
 import {
@@ -48,6 +48,18 @@ export class AgentWorkflow {
     }
   }
 
+  async executeExtractor(): Promise<void> {
+    try {
+      await this.extractorPhase();
+      await this.inspectorPhase();
+      this.complete();
+    } catch (error: any) {
+      console.error('Extractor error:', error);
+      sseManager.sendError(this.context.sessionId, error.message || '提取过程中发生错误');
+      sseManager.sendDone(this.context.sessionId);
+    }
+  }
+
   private async controllerPhase(): Promise<void> {
     this.updatePhase('uploading', 'controller');
     sseManager.updateStatus(this.context.sessionId, 'controller', 'thinking', '正在理解您的意图...');
@@ -58,17 +70,20 @@ export class AgentWorkflow {
     const prompt = buildIntentPrompt(
       this.context.userMessage,
       hasFiles,
-      this.context.extractedParams,
-      this.context.chatHistory,
+      this.context.extractedParams || null,
+      this.context.chatHistory || [],
       workflowState.phase
     );
 
     try {
-      const result = await callTextModel(prompt, INTENT_RECOGNITION_PROMPT);
-      const jsonStr = extractJSON(result);
+      const modelResult = await callTextModel(prompt, INTENT_RECOGNITION_PROMPT);
+      const jsonStr = extractJSON(modelResult.content);
       const intentResult: IntentResult = JSON.parse(jsonStr);
 
-      sseManager.sendMessage(this.context.sessionId, 'controller', intentResult.reply);
+      sseManager.sendMessage(this.context.sessionId, 'controller', intentResult.reply, {
+        rawPrompt: modelResult.rawPrompt,
+        rawResponse: modelResult.rawResponse,
+      });
       sessionStore.addMessage(this.context.sessionId, 'assistant', intentResult.reply);
 
       switch (intentResult.intent) {
@@ -167,11 +182,11 @@ export class AgentWorkflow {
 
 用户指令：${this.context.userMessage || '无特殊指令'}`;
 
-    const result = await callVisionModel(base64, file.mimetype, analysisPrompt, SPLITTER_PROMPT);
+    const modelResult = await callVisionModel(base64, file.mimetype, analysisPrompt, SPLITTER_PROMPT);
 
     let views: any[] = [];
     try {
-      const jsonStr = extractJSON(result);
+      const jsonStr = extractJSON(modelResult.content);
       const parsed = JSON.parse(jsonStr);
       views = parsed.views || [];
     } catch {
@@ -181,7 +196,11 @@ export class AgentWorkflow {
     sseManager.sendMessage(
       this.context.sessionId,
       'splitter',
-      `视图拆解完成！已识别 ${views.length} 个视图。`
+      `视图拆解完成！已识别 ${views.length} 个视图。`,
+      {
+        rawPrompt: modelResult.rawPrompt,
+        rawResponse: modelResult.rawResponse,
+      }
     );
 
     sseManager.sendEvent(this.context.sessionId, {
@@ -197,7 +216,7 @@ export class AgentWorkflow {
 
     sessionStore.setWorkflowState(this.context.sessionId, {
       phase: 'waiting_confirmation',
-      splitterResult: result,
+      splitterResult: modelResult.content,
       files: this.context.files,
     });
 
@@ -218,20 +237,20 @@ export class AgentWorkflow {
 
     await this.delay(800);
 
-    const file = this.context.files[0];
-    const base64 = imageToBase64(file.buffer);
+    const files = this.context.files;
 
     sseManager.sendMessage(
       this.context.sessionId,
       'extractor',
-      '正在处理图纸，提取尺寸参数...'
+      `正在处理 ${files.length} 张裁剪视图，提取尺寸参数...`
     );
 
     sseManager.updateStatus(this.context.sessionId, 'extractor', 'working', '正在检索历史经验...');
 
     let ragContext = '';
     try {
-      const features = await ragService.extractDrawingFeatures(base64, file.mimetype);
+      const firstFileBase64 = imageToBase64(files[0].buffer);
+      const features = await ragService.extractDrawingFeatures(firstFileBase64, files[0].mimetype);
       const similarLessons = await ragService.findSimilarLessons(features);
       if (similarLessons.length > 0) {
         ragContext = ragService.generateLessonPrompt(similarLessons);
@@ -245,9 +264,7 @@ export class AgentWorkflow {
       console.error('RAG retrieval failed:', error);
     }
 
-    sseManager.updateStatus(this.context.sessionId, 'extractor', 'working', '正在提取参数...');
-
-    const extractionPrompt = `请从这张钣金图纸中提取以下参数：
+    const extractionPrompt = `请从这张钣金图纸的裁剪视图中提取以下参数：
 1. 零件类型 (identifiedType)
 2. 宽度 (width)、高度 (height)、深度 (depth)
 3. 翼缘长度 (flangeLength)
@@ -261,29 +278,87 @@ ${ragContext}
 
 请严格按照 JSON 格式输出结果。`;
 
-    const result = await callVisionModel(base64, file.mimetype, extractionPrompt, EXTRACTOR_PROMPT);
+    const combinedParams: Record<string, any> = {
+      identifiedType: undefined,
+      width: undefined,
+      height: undefined,
+      depth: undefined,
+      flangeLength: undefined,
+      materialThickness: undefined,
+      bendRadius: undefined,
+      holes: [],
+      holeArray: undefined,
+    };
 
-    try {
-      const jsonStr = extractJSON(result);
-      const parsed = JSON.parse(jsonStr);
-      this.context.extractedParams = parsed;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const base64 = imageToBase64(file.buffer);
 
-      sessionStore.updateParams(this.context.sessionId, parsed);
-      sseManager.sendParameterUpdate(this.context.sessionId, parsed);
-
-      const identifiedType = parsed.identifiedType || parsed.extractedParams?.identifiedType || '未知类型';
-      sseManager.sendMessage(
+      sseManager.updateStatus(
         this.context.sessionId,
         'extractor',
-        `参数提取完成！识别为 ${identifiedType}。`
+        'working',
+        `正在提取第 ${i + 1}/${files.length} 张视图...`
       );
-    } catch {
-      sseManager.sendMessage(
-        this.context.sessionId,
-        'extractor',
-        `参数提取完成，但结果格式需要人工审核。原始结果：${result.substring(0, 200)}...`
-      );
+
+      const viewLabel = file.originalname || `视图 ${i + 1}`;
+      const viewPrompt = `${extractionPrompt}\n\n当前正在分析：${viewLabel}`;
+
+      try {
+        const modelResult = await callVisionModel(base64, file.mimetype, viewPrompt, EXTRACTOR_PROMPT);
+
+        const jsonStr = extractJSON(modelResult.content);
+        const parsed = JSON.parse(jsonStr);
+        const viewParams = parsed.extractedParams || parsed;
+
+        if (viewParams.identifiedType && !combinedParams.identifiedType) {
+          combinedParams.identifiedType = viewParams.identifiedType;
+        }
+        if (viewParams.width !== undefined && combinedParams.width === undefined) {
+          combinedParams.width = viewParams.width;
+        }
+        if (viewParams.height !== undefined && combinedParams.height === undefined) {
+          combinedParams.height = viewParams.height;
+        }
+        if (viewParams.depth !== undefined && combinedParams.depth === undefined) {
+          combinedParams.depth = viewParams.depth;
+        }
+        if (viewParams.flangeLength !== undefined && combinedParams.flangeLength === undefined) {
+          combinedParams.flangeLength = viewParams.flangeLength;
+        }
+        if (viewParams.materialThickness !== undefined && combinedParams.materialThickness === undefined) {
+          combinedParams.materialThickness = viewParams.materialThickness;
+        }
+        if (viewParams.bendRadius !== undefined && combinedParams.bendRadius === undefined) {
+          combinedParams.bendRadius = viewParams.bendRadius;
+        }
+        if (viewParams.holes && Array.isArray(viewParams.holes)) {
+          combinedParams.holes = [...combinedParams.holes, ...viewParams.holes];
+        }
+        if (viewParams.holeArray && !combinedParams.holeArray) {
+          combinedParams.holeArray = viewParams.holeArray;
+        }
+      } catch (err) {
+        console.error(`Failed to extract from view ${i + 1}:`, err);
+        sseManager.sendMessage(
+          this.context.sessionId,
+          'extractor',
+          `⚠️ 视图 "${viewLabel}" 提取失败，跳过该视图。`
+        );
+      }
     }
+
+    this.context.extractedParams = combinedParams;
+
+    sessionStore.updateParams(this.context.sessionId, combinedParams);
+    sseManager.sendParameterUpdate(this.context.sessionId, combinedParams);
+
+    const identifiedType = combinedParams.identifiedType || '未知类型';
+    sseManager.sendMessage(
+      this.context.sessionId,
+      'extractor',
+      `参数提取完成！共处理 ${files.length} 张视图，识别为 ${identifiedType}。`
+    );
 
     sseManager.updateStatus(this.context.sessionId, 'extractor', 'idle');
   }
@@ -344,6 +419,22 @@ ${ragContext}
     sseManager.updateStatus(this.context.sessionId, 'inspector', 'idle');
   }
 
+  private getNestedValue(obj: any, path: string): any {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }
+
+  private setNestedValue(obj: any, path: string, value: any): void {
+    const keys = path.split('.');
+    const lastKey = keys.pop()!;
+    const target = keys.reduce((current, key) => {
+      if (!current[key] || typeof current[key] !== 'object') {
+        current[key] = {};
+      }
+      return current[key];
+    }, obj);
+    target[lastKey] = value;
+  }
+
   private async executeCommandPhase(actionDetails: {
     parameter: string;
     value: number | string;
@@ -358,7 +449,7 @@ ${ragContext}
       const params = extractedData.extractedParams || extractedData;
 
       const { parameter, value, operation } = actionDetails;
-      const currentValue = params[parameter];
+      const currentValue = this.getNestedValue(params, parameter);
 
       if (currentValue === undefined) {
         sseManager.sendMessage(
@@ -396,7 +487,7 @@ ${ragContext}
         return;
       }
 
-      params[parameter] = newValue;
+      this.setNestedValue(params, parameter, newValue);
 
       if (extractedData.extractedParams) {
         extractedData.extractedParams = params;
@@ -405,8 +496,8 @@ ${ragContext}
         this.context.extractedParams = params;
       }
 
-      sessionStore.updateParams(this.context.sessionId, this.context.extractedParams);
-      sseManager.sendParameterUpdate(this.context.sessionId, this.context.extractedParams);
+      sessionStore.updateParams(this.context.sessionId, this.context.extractedParams || {});
+      sseManager.sendParameterUpdate(this.context.sessionId, this.context.extractedParams || {});
 
       const operationText = operation === 'increase' ? '增加' : operation === 'decrease' ? '减少' : '设置为';
       sseManager.sendMessage(

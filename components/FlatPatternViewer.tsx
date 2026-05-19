@@ -10,20 +10,33 @@ interface Props {
 const expandHoleArray = (params: SheetMetalParams): Hole[] => {
   const holes: Hole[] = [...(params.holes || [])];
   
-  if (params.holeArray) {
-    const { startX, startY, spacing, count, diameter, face } = params.holeArray;
-    for (let i = 0; i < count; i++) {
-      holes.push({
-        type: 'CIRCLE',
-        x: startX + i * spacing,
-        y: startY,
-        diameter,
-        face: face || 'MAIN',
-      });
+  if (params.holeArray && typeof params.holeArray === 'object') {
+    const { startX = 0, startY = 0, spacing = 0, count = 0, diameter = 5, face } = params.holeArray;
+    
+    if (typeof count === 'number' && Number.isInteger(count) && count > 0 && 
+        typeof spacing === 'number' && spacing > 0 &&
+        typeof startX === 'number' && !isNaN(startX) &&
+        typeof startY === 'number' && !isNaN(startY) &&
+        typeof diameter === 'number' && diameter > 0) {
+      for (let i = 0; i < count; i++) {
+        const x = startX + i * spacing;
+        if (typeof x === 'number' && !isNaN(x)) {
+          holes.push({
+            type: 'CIRCLE',
+            x,
+            y: startY,
+            diameter,
+            face: face || 'MAIN',
+          });
+        }
+      }
     }
   }
   
-  return holes;
+  return holes.filter(h => 
+    typeof h.x === 'number' && !isNaN(h.x) && 
+    typeof h.y === 'number' && !isNaN(h.y)
+  );
 };
 
 export const FlatPatternViewer: React.FC<Props> = ({ params, onChange }) => {
@@ -343,11 +356,16 @@ export const FlatPatternViewer: React.FC<Props> = ({ params, onChange }) => {
             </text>
 
             {/* Hole Array Dimensions - if present */}
-            {params.holeArray && (() => {
-              const { startX, startY, spacing, count } = params.holeArray;
+            {params.holeArray && typeof params.holeArray === 'object' && (() => {
+              const { startX = 0, startY = 0, spacing = 0, count = 0 } = params.holeArray;
+              
+              if (typeof count !== 'number' || count <= 0 || typeof spacing !== 'number' || spacing <= 0) {
+                return null;
+              }
+              
               const lastHoleX = startX + (count - 1) * spacing;
               const endMargin = params.width - lastHoleX;
-              const holeY = result.flatHeight / 2; // Center of main face for LONG bend
+              const holeY = result.flatHeight / 2;
               
               return (
                 <>

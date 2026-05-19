@@ -1,5 +1,5 @@
 export type AgentRole = 'controller' | 'splitter' | 'extractor' | 'inspector';
-export type Intent = 'Greeting' | 'Chat' | 'AnalyzeDrawing' | 'ModifyParameter' | 'QueryData';
+export type Intent = 'Greeting' | 'Chat' | 'AnalyzeDrawing' | 'ModifyParameter' | 'QueryData' | 'ConfirmView' | 'ModifyView';
 
 export interface AgentMessage {
   id: string;
@@ -16,7 +16,10 @@ export interface SSEEvent {
   content?: string;
   status?: 'idle' | 'thinking' | 'working' | 'error';
   phase?: 'idle' | 'uploading' | 'splitting' | 'extracting' | 'inspecting' | 'executing' | 'complete' | 'error';
-  metadata?: Record<string, any>;
+  metadata?: Record<string, any> & {
+    rawPrompt?: string;
+    rawResponse?: string;
+  };
   params?: Record<string, any>;
 }
 

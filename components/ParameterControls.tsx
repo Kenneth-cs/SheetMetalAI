@@ -4,15 +4,12 @@ import { PART_TYPE_OPTIONS } from '../constants';
 
 interface Props {
   params: SheetMetalParams;
-  onChange: (newParams: SheetMetalParams) => void;
+  onChange: (updates: Partial<SheetMetalParams>) => void;
 }
 
 export const ParameterControls: React.FC<Props> = ({ params, onChange }) => {
   const handleChange = (field: keyof SheetMetalParams, value: any) => {
-    onChange({
-      ...params,
-      [field]: value
-    });
+    onChange({ [field]: value } as Partial<SheetMetalParams>);
   };
 
   return (

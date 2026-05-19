@@ -21,6 +21,8 @@ export interface ChatMessage {
     isError?: boolean;
     views?: ViewBox[];
     imageData?: string;
+    rawPrompt?: string;
+    rawResponse?: string;
   };
 }
 

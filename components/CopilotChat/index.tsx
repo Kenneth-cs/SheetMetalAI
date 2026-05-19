@@ -4,14 +4,26 @@ import { ChatInput } from './ChatInput';
 import { WorkflowIndicator } from './WorkflowIndicator';
 import { useSSEConnection } from './useSSEConnection';
 
-interface CopilotChatProps {
-  onParamsUpdate?: (params: Record<string, any>) => void;
-  onAdjustView?: () => void;
+export interface ViewCropData {
+  imageData: string;
+  views: Array<{
+    type: string;
+    label: string;
+    box: [number, number, number, number];
+  }>;
 }
 
-export const CopilotChat: React.FC<CopilotChatProps> = ({ onParamsUpdate, onAdjustView }) => {
-  const { messages, agentStatuses, workflow, isProcessing, currentParams, sendMessage } = useSSEConnection();
+interface CopilotChatProps {
+  onParamsUpdate?: (params: Record<string, any>) => void;
+  onAdjustView?: (data?: ViewCropData) => void;
+  onCropConfirm?: (sessionId: string, confirmViews: (files: File[]) => Promise<void>) => void;
+  onSendMessageReady?: (sendMessage: (content: string) => void) => void;
+}
+
+export const CopilotChat: React.FC<CopilotChatProps> = ({ onParamsUpdate, onAdjustView, onCropConfirm, onSendMessageReady }) => {
+  const { messages, agentStatuses, workflow, isProcessing, currentParams, sessionId, sendMessage, confirmViews } = useSSEConnection();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastViewDataRef = useRef<ViewCropData | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -23,17 +35,33 @@ export const CopilotChat: React.FC<CopilotChatProps> = ({ onParamsUpdate, onAdju
     }
   }, [currentParams, onParamsUpdate]);
 
+  useEffect(() => {
+    if (onCropConfirm) {
+      onCropConfirm(sessionId, confirmViews);
+    }
+  }, [sessionId, confirmViews, onCropConfirm]);
+
+  useEffect(() => {
+    if (onSendMessageReady) {
+      const sendMessageWrapper = (content: string) => {
+        sendMessage(content);
+      };
+      onSendMessageReady(sendMessageWrapper);
+    }
+  }, [onSendMessageReady, sendMessage]);
+
   const handleConfirmView = useCallback(() => {
     sendMessage('确认');
   }, [sendMessage]);
 
-  const handleAdjustView = useCallback(() => {
-    if (onAdjustView) {
-      onAdjustView();
-    } else {
-      sendMessage('需要调整视图位置');
+  const handleAdjustView = useCallback((data?: ViewCropData) => {
+    if (data) {
+      lastViewDataRef.current = data;
     }
-  }, [sendMessage, onAdjustView]);
+    if (onAdjustView) {
+      onAdjustView(data || lastViewDataRef.current || undefined);
+    }
+  }, [onAdjustView]);
 
   return (
     <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700">

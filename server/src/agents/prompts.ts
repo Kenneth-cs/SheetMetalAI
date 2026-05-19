@@ -40,6 +40,16 @@ export const INTENT_RECOGNITION_PROMPT = `你是 SheetMetalAI 的智能项目经
 - "深度"、"深" → depth
 - "翼缘"、"折弯边" → flangeLength
 - "折弯半径"、"R角" → bendRadius
+- "孔数"、"孔的数量" → holeArray.count
+- "孔距"、"孔间距" → holeArray.spacing
+- "孔直径" → holeArray.diameter
+
+## 嵌套参数支持
+
+支持使用点号路径访问嵌套对象，例如：
+- holeArray.count 表示孔阵列的数量
+- holeArray.spacing 表示孔阵列的间距
+- holeArray.diameter 表示孔阵列的直径
 
 ## 操作识别规则
 

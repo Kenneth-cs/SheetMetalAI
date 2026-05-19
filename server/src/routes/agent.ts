@@ -65,6 +65,52 @@ router.get('/stream/:sessionId', (req: Request, res: Response) => {
   });
 });
 
+router.post('/confirm-views', upload.array('files', 10), async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.body.sessionId as string;
+    const files = (req.files as Express.Multer.File[]) || [];
+
+    if (!sessionId) {
+      return res.status(400).json({ error: '缺少 sessionId' });
+    }
+
+    sessionStore.addMessage(sessionId, 'user', '确认视图并继续提取');
+    sessionStore.setWorkflowState(sessionId, { phase: 'extracting' });
+
+    res.json({ success: true, sessionId });
+
+    const session = sessionStore.getOrCreate(sessionId);
+    const workflowFiles = files.length > 0 ? files : (session.workflowState.files || []);
+    const workflow = new AgentWorkflow(
+      sessionId,
+      '确认视图并继续提取',
+      workflowFiles as Express.Multer.File[],
+      session.extractedParams || undefined,
+      session.chatHistory
+    );
+    activeWorkflows.set(sessionId, workflow);
+
+    workflow.executeExtractor()
+      .catch((err: Error) => {
+        console.error(`Extractor error for session ${sessionId}:`, err);
+        try {
+          sseManager.sendError(sessionId, err.message || '提取过程中发生错误');
+          sseManager.sendDone(sessionId);
+        } catch (e) {
+          console.error('Failed to send error to client:', e);
+        }
+      })
+      .finally(() => {
+        activeWorkflows.delete(sessionId);
+      });
+  } catch (error: any) {
+    console.error('Confirm views route error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+});
+
 router.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });

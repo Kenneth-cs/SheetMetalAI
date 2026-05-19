@@ -56,6 +56,7 @@ const App: React.FC = () => {
 
   const confirmViewsRef = useRef<((files: File[]) => Promise<void>) | null>(null);
   const sendMessageRef = useRef<((content: string) => void) | null>(null);
+  const addSystemMessageRef = useRef<((content: string, isError?: boolean) => void) | null>(null);
 
   const validateSheetMetalParams = useCallback((updates: Partial<SheetMetalParams>): { valid: boolean; errors: string[] } => {
     const errors: string[] = [];
@@ -86,8 +87,8 @@ const App: React.FC = () => {
       }
     }
     if (updates.bendRadius !== undefined) {
-      if (typeof updates.bendRadius !== 'number' || isNaN(updates.bendRadius) || updates.bendRadius <= 0) {
-        errors.push('折弯半径 (bendRadius) 必须是正数');
+      if (typeof updates.bendRadius !== 'number' || isNaN(updates.bendRadius) || updates.bendRadius < 0) {
+        errors.push('折弯半径 (bendRadius) 不能为负数');
       }
     }
     if (updates.kFactor !== undefined) {
@@ -148,8 +149,8 @@ const App: React.FC = () => {
       const errorMsg = validation.errors.join('；');
       console.error('参数校验失败:', errorMsg);
 
-      if (source === 'ai' && sendMessageRef.current) {
-        sendMessageRef.current(`⚠️ AI 生成的参数格式有误，请重试。\n错误详情：${errorMsg}`);
+      if (source === 'ai' && addSystemMessageRef.current) {
+        addSystemMessageRef.current(`⚠️ AI 生成的参数格式有误，已拦截本次更新。\n错误详情：${errorMsg}`, true);
       }
       return false;
     }
@@ -669,6 +670,7 @@ const App: React.FC = () => {
             onAdjustView={handleCopilotAdjustView}
             onCropConfirm={handleCropConfirmCallback}
             onSendMessageReady={(sendMsg) => { sendMessageRef.current = sendMsg; }}
+            onSystemMessageReady={(addSysMsg) => { addSystemMessageRef.current = addSysMsg; }}
           />
         </div>
 

@@ -310,9 +310,10 @@ ${ragContext}
         const jsonStr = extractJSON(modelResult.content);
         const parsed = JSON.parse(jsonStr);
         const viewParams = parsed.extractedParams || parsed;
+        const currentIdentifiedType = parsed.identifiedType || viewParams.identifiedType;
 
-        if (viewParams.identifiedType && !combinedParams.identifiedType) {
-          combinedParams.identifiedType = viewParams.identifiedType;
+        if (currentIdentifiedType && !combinedParams.identifiedType) {
+          combinedParams.identifiedType = currentIdentifiedType;
         }
         if (viewParams.width !== undefined && combinedParams.width === undefined) {
           combinedParams.width = viewParams.width;

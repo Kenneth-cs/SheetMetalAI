@@ -27,6 +27,7 @@ export interface UseSSEConnectionReturn {
   sessionId: string;
   sendMessage: (content: string, files?: File[]) => Promise<void>;
   confirmViews: (files: File[]) => Promise<void>;
+  addSystemMessage: (content: string, isError?: boolean) => void;
 }
 
 export function useSSEConnection(): UseSSEConnectionReturn {
@@ -52,6 +53,15 @@ export function useSSEConnection(): UseSSEConnectionReturn {
     setMessages(prev => [...prev, newMsg]);
     return newMsg.id;
   }, []);
+
+  const addSystemMessage = useCallback((content: string, isError = false) => {
+    addMessage({
+      role: 'system',
+      content,
+      status: 'complete',
+      metadata: { isError }
+    });
+  }, [addMessage]);
 
   const handleSSEEvent = useCallback(
     (event: SSEEvent) => {
@@ -263,5 +273,6 @@ export function useSSEConnection(): UseSSEConnectionReturn {
     sessionId: sessionIdRef.current,
     sendMessage,
     confirmViews,
+    addSystemMessage,
   };
 }

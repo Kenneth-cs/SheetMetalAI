@@ -176,7 +176,9 @@ export const EXTRACTOR_PROMPT = `你是 SheetMetalAI 的参数提取员（Agent 
 **严禁**将阵列信息（count, spacing）放入 holes 数组！
 
 ## 输出格式
-严格输出 JSON 格式：
+严格输出 JSON 格式，其中 identifiedType 必须是以下之一：
+"Flat Panel", "L-Bracket", "U-Channel", "Box Panel (4 Bend)", "Custom/Complex"
+
 {
   "identifiedType": "U-Channel",
   "confidence": 0.85,

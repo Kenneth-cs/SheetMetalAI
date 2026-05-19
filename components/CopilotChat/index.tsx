@@ -18,10 +18,11 @@ interface CopilotChatProps {
   onAdjustView?: (data?: ViewCropData) => void;
   onCropConfirm?: (sessionId: string, confirmViews: (files: File[]) => Promise<void>) => void;
   onSendMessageReady?: (sendMessage: (content: string) => void) => void;
+  onSystemMessageReady?: (addSysMsg: (content: string, isError?: boolean) => void) => void;
 }
 
-export const CopilotChat: React.FC<CopilotChatProps> = ({ onParamsUpdate, onAdjustView, onCropConfirm, onSendMessageReady }) => {
-  const { messages, agentStatuses, workflow, isProcessing, currentParams, sessionId, sendMessage, confirmViews } = useSSEConnection();
+export const CopilotChat: React.FC<CopilotChatProps> = ({ onParamsUpdate, onAdjustView, onCropConfirm, onSendMessageReady, onSystemMessageReady }) => {
+  const { messages, agentStatuses, workflow, isProcessing, currentParams, sessionId, sendMessage, confirmViews, addSystemMessage } = useSSEConnection();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastViewDataRef = useRef<ViewCropData | null>(null);
 
@@ -49,6 +50,12 @@ export const CopilotChat: React.FC<CopilotChatProps> = ({ onParamsUpdate, onAdju
       onSendMessageReady(sendMessageWrapper);
     }
   }, [onSendMessageReady, sendMessage]);
+
+  useEffect(() => {
+    if (onSystemMessageReady) {
+      onSystemMessageReady(addSystemMessage);
+    }
+  }, [onSystemMessageReady, addSystemMessage]);
 
   const handleConfirmView = useCallback(() => {
     sendMessage('确认');

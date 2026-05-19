@@ -199,6 +199,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onConfirmView
             置信度: {(message.metadata.confidence * 100).toFixed(0)}%
           </div>
         )}
+        {message.metadata?.images && message.metadata.images.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {message.metadata.images.map((img, idx) => (
+              <img key={idx} src={img} alt="cropped view" className="w-24 h-24 object-cover rounded border border-slate-600 bg-white" />
+            ))}
+          </div>
+        )}
         {(message.metadata?.rawPrompt || message.metadata?.rawResponse) && (
           <TraceabilityPanel 
             rawPrompt={message.metadata.rawPrompt} 

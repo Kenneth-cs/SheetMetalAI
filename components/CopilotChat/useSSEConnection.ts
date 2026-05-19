@@ -207,10 +207,21 @@ export function useSSEConnection(): UseSSEConnectionReturn {
     async (files: File[]) => {
       setIsProcessing(true);
 
+      // Convert files to base64 for display in the chat
+      const imagePromises = files.map(file => {
+        return new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      });
+      const images = await Promise.all(imagePromises);
+
       addMessage({
-        role: 'system',
-        content: '已确认视图，正在提取参数...',
+        role: 'user',
+        content: `已确认裁剪 ${files.length} 个视图，请基于这些视图提取参数。`,
         status: 'complete',
+        metadata: { images },
       });
 
       try {

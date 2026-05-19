@@ -23,6 +23,7 @@ export interface ChatMessage {
     imageData?: string;
     rawPrompt?: string;
     rawResponse?: string;
+    images?: string[];
   };
 }
 
